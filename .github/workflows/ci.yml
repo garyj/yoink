@@ -1,0 +1,80 @@
+name: CI and Linux release
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl file \
+            libxdo-dev libssl-dev librsvg2-dev libdbus-1-dev xvfb xclip
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.1
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: Check versions and code
+        run: |
+          bun scripts/check-version.js
+          cargo fmt --all --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          bun run check
+      - name: Run tests
+        run: |
+          cargo test --locked --workspace
+          xvfb-run -a cargo test --locked --workspace x11_ -- --ignored --test-threads=1
+      - name: Build embedded frontend and executable
+        run: bun run tauri build --no-bundle -- --locked
+      - name: Check executable
+        run: |
+          target/release/yoink --version
+          target/release/yoink --help
+          ldd target/release/yoink
+      - name: Package binary and corresponding source
+        if: github.ref_type == 'tag'
+        run: scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: github.ref_type == 'tag'
+        with:
+          name: linux-release
+          path: |
+            target/dist/*.tar.gz
+            target/dist/SHA256SUMS
+          if-no-files-found: error
+
+  draft-release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: linux-release
+          path: dist
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --verify-tag --draft --title "yoink $RELEASE_TAG" \
+            --notes 'Linux x86_64 on X11. Requires GTK3 and WebKitGTK 4.1. The binary archive includes licences; the source archive includes dependency sources. See the README for installation and privacy details.'

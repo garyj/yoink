@@ -19,10 +19,35 @@ them as secret. Read [Storage and privacy](#storage-and-privacy) before use.
 
 ## Install
 
-The release workflow produces a Linux executable archive and a source archive.
-Until the first GitHub Release is published, [build from source](#build-from-source).
+Install the latest release into `~/.local`:
 
-For a published release, use mise's built-in
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/garyj/yoink/main/install.sh | sh
+~/.local/bin/yoink --version
+```
+
+Pass `--version 0.1.0` to install a specific release or `--prefix /absolute/path`
+to use another installation prefix:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/garyj/yoink/main/install.sh | \
+  sh -s -- --version 0.1.0
+```
+
+The installer verifies the release archive against its published SHA-256
+checksum. It installs the executable, desktop entry, icon, README, source
+commit identifier, and licence notices. To remove those files while keeping
+clipboard history and configuration:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://raw.githubusercontent.com/garyj/yoink/main/install.sh | \
+  sh -s -- --uninstall
+```
+
+Alternatively, use mise's built-in
 [GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html):
 
 ```sh
@@ -41,7 +66,7 @@ sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0
 ```
 
 Newer Ubuntu releases may name the GTK package `libgtk-3-0t64`. The binary
-dynamically links these libraries. mise does not install them.
+dynamically links these libraries. The installer and mise do not install them.
 
 You can also download `yoink-v0.1.0-x86_64-unknown-linux-gnu.tar.gz` and
 `SHA256SUMS` from the GitHub Release, then extract them in an empty directory:
@@ -62,6 +87,12 @@ Further invocations toggle the same instance.
 
 In Cinnamon, open **System Settings**, **Keyboard**, **Shortcuts**, then
 **Custom Shortcuts**. Bind your chosen key to the full path of the executable.
+The installer places it here by default:
+
+```text
+/home/YOUR_USER/.local/bin/yoink
+```
+
 For a mise installation, use the stable shim path after `mise reshim`:
 
 ```text

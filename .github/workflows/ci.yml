@@ -21,7 +21,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl file \
-            libxdo-dev libssl-dev librsvg2-dev libdbus-1-dev xvfb xclip
+            libxdo-dev libssl-dev librsvg2-dev libdbus-1-dev shellcheck xvfb xclip
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
           version: 2026.9.1
@@ -29,6 +29,16 @@ jobs:
         run: rustup show
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
+      - name: Test release installer
+        run: |
+          shellcheck install.sh
+          prefix=$(mktemp -d)
+          ./install.sh --version 0.1.0 --prefix "$prefix"
+          test "$("$prefix/bin/yoink" --version)" = "yoink 0.1.0"
+          test -s "$prefix/share/applications/dev.garyj.yoink.desktop"
+          ./install.sh --uninstall --prefix "$prefix"
+          test ! -e "$prefix/bin/yoink"
+          test ! -e "$prefix/share/applications/dev.garyj.yoink.desktop"
       - name: Check versions and code
         run: |
           bun scripts/check-version.js

@@ -135,6 +135,25 @@ pub fn hex_color(text: &str) -> Option<u32> {
     }
 }
 
+/// A link without its scheme, shortened in the middle so the end of the path
+/// stays visible.
+pub fn link_title(link: &str) -> String {
+    const KEEP: usize = 26;
+    let link = link.trim();
+    let bare = link
+        .strip_prefix("https://")
+        .or_else(|| link.strip_prefix("http://"))
+        .unwrap_or(link);
+    let bare = bare.strip_prefix("www.").unwrap_or(bare);
+    let chars: Vec<char> = bare.chars().collect();
+    if chars.len() <= KEEP * 2 + 1 {
+        return bare.to_string();
+    }
+    let head: String = chars[..KEEP].iter().collect();
+    let tail: String = chars[chars.len() - KEEP..].iter().collect();
+    format!("{head}…{tail}")
+}
+
 pub fn is_link(text: &str) -> bool {
     let text = text.trim();
     (text.starts_with("https://") || text.starts_with("http://"))

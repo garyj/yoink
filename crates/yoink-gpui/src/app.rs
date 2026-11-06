@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::scroll::Scrollbar;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme};
 use gpui_kit::{prelude::*, *};
 use yoink_clipboard as clipboard;
@@ -28,7 +28,7 @@ gpui_kit::actions!(
 const CONTEXT: &str = "Yoink";
 const ROW_HEIGHT: f32 = 44.;
 const PAGE_ROWS: usize = 8;
-const LIST_WIDTH: f32 = 340.;
+const LIST_WIDTH: f32 = 372.;
 
 pub fn window_size() -> Size<Pixels> {
     size(px(880.), px(540.))
@@ -53,9 +53,7 @@ pub enum Message {
 }
 
 enum Kind {
-    Text {
-        lines: usize,
-    },
+    Text,
     Link,
     Color(u32),
     Image {
@@ -124,6 +122,7 @@ impl Yoink {
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, _, event: &InputEvent, _, cx| {
                 if let InputEvent::Change = event {
+                    this.preview = Preview::Empty;
                     this.reload(cx);
                     this.select(0, cx);
                 }
@@ -178,6 +177,7 @@ impl Yoink {
         if !self.shown {
             self.shown = true;
             self.confirming_clear = false;
+            self.preview = Preview::Empty;
             self.reload(cx);
             self.select(0, cx);
             self.search.update(cx, |search, cx| {
@@ -253,13 +253,12 @@ impl Yoink {
                         ItemKind::Text => match text::hex_color(&item.text) {
                             Some(rgb) => Kind::Color(rgb),
                             None if text::is_link(&item.text) => Kind::Link,
-                            None => Kind::Text {
-                                lines: item.text.trim_end().lines().count().max(1),
-                            },
+                            None => Kind::Text,
                         },
                     };
                     let title = match &kind {
                         Kind::Image { width, height, .. } => format!("Image {width} × {height}"),
+                        Kind::Link => text::link_title(&item.text),
                         _ => text::title(&item.text),
                     };
                     Ok(Row {
@@ -378,6 +377,7 @@ impl Yoink {
         } else if !self.search.read(cx).value().is_empty() {
             self.search
                 .update(cx, |search, cx| search.set_value("", window, cx));
+            self.preview = Preview::Empty;
             self.reload(cx);
             self.select(0, cx);
         } else {
@@ -386,7 +386,11 @@ impl Yoink {
     }
 
     fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        self.copy_selected(cx);
+        if self.confirming_clear {
+            self.clear_history(cx);
+        } else {
+            self.copy_selected(cx);
+        }
     }
 
     fn copy_selected(&mut self, cx: &mut Context<Self>) {
@@ -483,7 +487,11 @@ struct Palette {
     selected: Hsla,
     hover: Hsla,
     chip: Hsla,
+    /// Outlines that must read against any content: swatches, images, keycaps.
+    edge: Hsla,
     danger: Hsla,
+    /// The chip behind search matches.
+    matched: Hsla,
 }
 
 impl Palette {
@@ -496,12 +504,14 @@ impl Palette {
                 border: hsla(0., 0., 1., 0.07),
                 text: rgb(0xeceef2).into(),
                 muted: rgb(0xa0a4ae).into(),
-                faint: rgb(0x8a8e99).into(),
+                faint: rgb(0x9ca3af).into(),
                 accent,
-                selected: rgb(0x3f3020).into(),
+                selected: hsla(0., 0., 1., 0.075),
+                edge: hsla(0., 0., 1., 0.14),
                 hover: hsla(0., 0., 1., 0.04),
                 chip: hsla(0., 0., 1., 0.06),
-                danger: rgb(0xff6b62).into(),
+                danger: rgb(0xe5484d).into(),
+                matched: hsla(35. / 360., 1., 0.55, 0.3),
             }
         } else {
             Self {
@@ -510,12 +520,14 @@ impl Palette {
                 border: hsla(0., 0., 0., 0.08),
                 text: rgb(0x1c1d22).into(),
                 muted: rgb(0x5f6470).into(),
-                faint: rgb(0x6e7380).into(),
+                faint: rgb(0x6b7280).into(),
                 accent: rgb(0xf08a00).into(),
-                selected: rgb(0xfbe6cb).into(),
+                selected: hsla(0., 0., 0., 0.055),
+                edge: hsla(0., 0., 0., 0.12),
                 hover: hsla(0., 0., 0., 0.035),
                 chip: hsla(0., 0., 0., 0.05),
                 danger: rgb(0xd93a31).into(),
+                matched: hsla(35. / 360., 1., 0.5, 0.28),
             }
         }
     }
@@ -533,8 +545,8 @@ pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
         theme.ring = palette.accent;
         theme.muted_foreground = palette.faint;
         theme.scrollbar = transparent_black();
-        theme.scrollbar_thumb = palette.text.opacity(0.18);
-        theme.scrollbar_thumb_hover = palette.text.opacity(0.32);
+        theme.scrollbar_thumb = palette.text.opacity(0.3);
+        theme.scrollbar_thumb_hover = palette.text.opacity(0.45);
     });
 }
 
@@ -611,7 +623,8 @@ impl Yoink {
             .flex()
             .items_center()
             .gap_3()
-            .px_5()
+            .pl_5()
+            .pr_6()
             .child(
                 Icon::new(Icons::Search)
                     .size(px(18.))
@@ -655,9 +668,11 @@ impl Yoink {
                     }),
                 )
                 .track_scroll(&self.list_scroll)
-                .py_1p5()
+                .py_2()
                 .size_full(),
             )
+            .child(edge_fade(palette.background, true))
+            .child(edge_fade(palette.background, false))
             .child(Scrollbar::vertical(&self.list_scroll))
     }
 
@@ -676,8 +691,7 @@ impl Yoink {
                 (
                     range,
                     HighlightStyle {
-                        color: Some(palette.accent),
-                        font_weight: Some(FontWeight::SEMIBOLD),
+                        background_color: Some(palette.matched),
                         ..Default::default()
                     },
                 )
@@ -686,8 +700,7 @@ impl Yoink {
         div()
             .id(index)
             .h(px(ROW_HEIGHT))
-            .pl_2()
-            .pr_3()
+            .px_2()
             .child(
                 div()
                     .relative()
@@ -728,9 +741,11 @@ impl Yoink {
                     .child(
                         div()
                             .flex_none()
+                            .w(px(30.))
+                            .text_right()
                             .text_size(px(12.))
                             .text_color(if selected {
-                                palette.muted
+                                palette.text
                             } else {
                                 palette.faint
                             })
@@ -774,8 +789,7 @@ impl Yoink {
                 .into_any_element()
         };
         match &row.kind {
-            Kind::Text { lines: 1 } => icon(Icons::Type),
-            Kind::Text { .. } => icon(Icons::FileText),
+            Kind::Text => icon(Icons::TextAlignStart),
             Kind::Link => icon(Icons::Link),
             Kind::Color(rgb_value) => div()
                 .size(px(26.))
@@ -811,6 +825,7 @@ impl Yoink {
             match (&row.kind, &self.preview) {
                 (Kind::Color(value), _) => {
                     facts.push(("Type", "Color".into()));
+                    facts.push(("Hex", format!("#{value:06x}").into()));
                     facts.push((
                         "RGB",
                         format!(
@@ -831,9 +846,9 @@ impl Yoink {
                         .child(
                             div()
                                 .size(px(112.))
-                                .rounded(px(24.))
+                                .rounded(px(16.))
                                 .border_1()
-                                .border_color(palette.border)
+                                .border_color(palette.edge)
                                 .shadow_lg()
                                 .bg(rgb(*value)),
                         )
@@ -871,7 +886,9 @@ impl Yoink {
                                 .max_w_full()
                                 .max_h_full()
                                 .object_fit(ObjectFit::Contain)
-                                .rounded(px(6.)),
+                                .rounded(px(6.))
+                                .border_1()
+                                .border_color(palette.edge),
                         )
                         .into_any_element()
                 }
@@ -898,8 +915,7 @@ impl Yoink {
                             (
                                 range,
                                 HighlightStyle {
-                                    color: Some(palette.accent),
-                                    font_weight: Some(FontWeight::SEMIBOLD),
+                                    background_color: Some(palette.matched),
                                     ..Default::default()
                                 },
                             )
@@ -911,19 +927,20 @@ impl Yoink {
                         .track_scroll(&self.preview_scroll)
                         .when(monospace, |body| body.overflow_scroll())
                         .when(!monospace, |body| body.overflow_y_scroll())
-                        .px_7()
+                        .px_6()
                         .py_6()
                         .child(
                             div()
                                 .when(!monospace, |text| text.w_full())
                                 .when(monospace, |text| {
                                     text.whitespace_nowrap()
+                                        .pr_6()
                                         .font_family(mono.clone())
                                         .text_size(px(13.))
                                         .line_height(px(21.))
                                 })
                                 .when(!monospace, |text| {
-                                    text.text_size(px(16.)).line_height(px(25.))
+                                    text.text_size(px(18.)).line_height(px(28.))
                                 })
                                 .when(link, |text| text.text_color(palette.accent))
                                 .child(styled),
@@ -949,39 +966,44 @@ impl Yoink {
             facts.push(("First copied", when(row.first_copied_at_ms)));
         }
 
+        let fact = |label: &'static str, value: SharedString| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .text_size(px(12.5))
+                .child(div().flex_none().text_color(palette.muted).child(label))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(palette.text.opacity(0.88))
+                        .child(value),
+                )
+        };
+        let (times, counts): (Vec<_>, Vec<_>) = facts
+            .into_iter()
+            .partition(|(label, _)| label.ends_with("copied"));
         let information = div()
             .flex_none()
-            .px_7()
-            .pt_3()
+            .h(px(116.))
+            .px_6()
+            .pt_2p5()
             .pb_2()
             .border_t_1()
             .border_color(palette.border)
-            .child(
+            .children(counts.chunks(2).map(|pair| {
                 div()
-                    .pb_1()
-                    .text_size(px(12.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(palette.muted)
-                    .child("Information"),
-            )
-            .children(
-                facts
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (label, value))| {
-                        div()
-                            .h(px(26.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .when(index > 0, |fact| {
-                                fact.border_t_1().border_color(palette.border)
-                            })
-                            .text_size(px(12.5))
-                            .child(div().text_color(palette.muted).child(label))
-                            .child(div().text_color(palette.text.opacity(0.85)).child(value))
-                    }),
-            );
+                    .flex()
+                    .gap_8()
+                    .children(pair.iter().map(|(label, value)| fact(label, value.clone())))
+                    .when(pair.len() == 1, |row| row.child(div().flex_1()))
+            }))
+            .children(times.into_iter().map(|(label, value)| fact(label, value)));
 
         div()
             .flex_1()
@@ -996,9 +1018,18 @@ impl Yoink {
                     .flex_1()
                     .min_h_0()
                     .child(body)
-                    .when(matches!(self.preview, Preview::Text { .. }), |body| {
-                        body.child(Scrollbar::vertical(&self.preview_scroll))
-                    }),
+                    .when(
+                        matches!(self.preview, Preview::Text { lines: 2.., .. }),
+                        |body| {
+                            body.child(
+                                Scrollbar::new(&self.preview_scroll).mode(ScrollbarMode::Always),
+                            )
+                        },
+                    )
+                    .when(
+                        matches!(self.preview, Preview::Text { lines: 1, .. }),
+                        |body| body.child(Scrollbar::vertical(&self.preview_scroll)),
+                    ),
             )
             .child(information)
             .into_any_element()
@@ -1030,11 +1061,15 @@ impl Yoink {
                 div()
                     .size(px(56.))
                     .rounded_full()
-                    .bg(palette.chip)
+                    .bg(palette.selected)
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(Icon::new(icon).size(px(24.)).text_color(palette.muted)),
+                    .child(
+                        Icon::new(icon)
+                            .size(px(24.))
+                            .text_color(palette.text.opacity(0.7)),
+                    ),
             )
             .child(
                 div()
@@ -1051,14 +1086,12 @@ impl Yoink {
     }
 
     fn render_footer(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let enabled = !self.rows.is_empty();
-        let hint = |keys: &[&'static str], label: &'static str, primary: bool, dims: bool| {
+        let hint = |keys: &[&'static str], label: &'static str, primary: bool| {
             let color = if primary { palette.text } else { palette.muted };
             div()
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .when(dims && !enabled, |hint| hint.opacity(0.4))
                 .children(keys.iter().map(|key| {
                     div()
                         .min_w(px(22.))
@@ -1070,117 +1103,138 @@ impl Yoink {
                         .rounded(px(5.))
                         .bg(palette.chip)
                         .border_1()
-                        .border_color(palette.border)
+                        .border_color(palette.edge)
                         .text_size(px(12.))
                         .text_color(color)
                         .child(*key)
                 }))
                 .child(div().text_size(px(12.5)).text_color(color).child(label))
         };
-        let button = |id: &'static str, label: SharedString| {
-            div()
-                .id(id)
-                .h(px(26.))
-                .px_2p5()
-                .flex()
-                .items_center()
-                .rounded(px(6.))
-                .cursor_pointer()
-                .text_size(px(12.5))
-                .child(label)
-        };
-        let (danger, muted, hover) = (palette.danger, palette.muted, palette.hover);
-        let searching = !self.search.read(cx).value().is_empty();
-        let can_clear = self.total > 0 && !searching;
-        let esc_label = if self.confirming_clear {
-            "Cancel"
-        } else if searching {
-            "Clear search"
-        } else {
-            "Close"
-        };
-        let right = if !can_clear {
-            div().into_any_element()
-        } else if self.confirming_clear {
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .text_color(palette.text)
-                        .child("Delete all history?"),
-                )
-                .child(
-                    button("cancel-clear", "Cancel".into())
-                        .text_color(muted)
-                        .hover(move |style| style.bg(hover))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.confirming_clear = false;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    button(
-                        "confirm-clear",
-                        format!(
-                            "Clear {} {}",
-                            text::thousands(self.total),
-                            plural(self.total, "item", "items")
-                        )
-                        .into(),
-                    )
-                    .bg(danger)
-                    .text_color(white())
-                    .font_weight(FontWeight::MEDIUM)
-                    .hover(move |style| style.bg(danger.opacity(0.85)))
-                    .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
-                )
-                .into_any_element()
-        } else {
-            button("clear", "Clear history".into())
-                .text_color(muted)
-                .hover(move |style| style.text_color(danger).bg(hover))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.confirming_clear = true;
-                    cx.notify();
-                }))
-                .into_any_element()
-        };
-        div()
+        let footer = div()
             .h(px(46.))
             .flex_none()
             .flex()
             .items_center()
             .gap_6()
-            .pl_4()
-            .pr_2p5()
+            .pl_5()
+            .pr_3p5()
             .border_t_1()
-            .border_color(palette.border)
-            .child(hint(&["↵"], "Copy", true, true))
-            .child(hint(&["↑", "↓"], "Navigate", false, true))
-            .child(hint(&["⇧ Del"], "Delete", false, true))
-            .child(hint(&["Esc"], esc_label, false, false))
+            .border_color(palette.border);
+        let (danger, muted, hover) = (palette.danger, palette.muted, palette.hover);
+
+        if self.confirming_clear {
+            let count = format!(
+                "{} {}",
+                text::thousands(self.total),
+                plural(self.total, "item", "items")
+            );
+            return footer
+                .bg(danger.opacity(0.08))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(13.))
+                        .text_color(palette.text)
+                        .child(format!("Delete all {count}? This cannot be undone.")),
+                )
+                .child(hint(&["Esc"], "Cancel", false))
+                .child(
+                    div()
+                        .id("confirm-clear")
+                        .h(px(32.))
+                        .px_3p5()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded(px(7.))
+                        .cursor_pointer()
+                        .bg(danger)
+                        .hover(move |style| style.bg(danger.opacity(0.88)))
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(white())
+                        .child(format!("Delete {count}"))
+                        .child(
+                            div()
+                                .px_1()
+                                .rounded(px(4.))
+                                .bg(white().opacity(0.2))
+                                .text_size(px(11.))
+                                .child("Enter"),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
+                );
+        }
+
+        let searching = !self.search.read(cx).value().is_empty();
+        let has_rows = !self.rows.is_empty();
+        footer
+            .when(has_rows, |footer| {
+                footer
+                    .child(hint(&["Enter"], "Copy", true))
+                    .child(hint(&["↑", "↓"], "Navigate", false))
+                    .child(hint(&["⇧ Del"], "Delete", false))
+            })
+            .child(hint(
+                &["Esc"],
+                if searching { "Clear search" } else { "Close" },
+                !has_rows,
+            ))
             .child(div().flex_1())
-            .child(right)
+            .when(self.total > 0 && !searching, |footer| {
+                footer.child(
+                    div()
+                        .id("clear")
+                        .h(px(30.))
+                        .px_2p5()
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .text_size(px(12.5))
+                        .text_color(muted)
+                        .hover(move |style| style.text_color(danger).bg(hover))
+                        .child("Clear history")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirming_clear = true;
+                            cx.notify();
+                        })),
+                )
+            })
     }
 }
 
-/// A centered square crop of a thumbnail, at twice the badge size.
+/// Fades rows into the list edge, so a partly scrolled row reads as cut off
+/// on purpose.
+fn edge_fade(background: Hsla, top: bool) -> Div {
+    let fade = div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .h(px(8.))
+        .bg(linear_gradient(
+            if top { 180. } else { 0. },
+            linear_color_stop(background, 0.),
+            linear_color_stop(background.opacity(0.), 1.),
+        ));
+    if top { fade.top_0() } else { fade.bottom_0() }
+}
+
+/// The thumbnail fitted into a transparent square at twice the badge size,
+/// so wide and tall images keep their shape.
 fn square_badge(png: &[u8]) -> Option<Vec<u8>> {
+    const SIDE: u32 = 52;
     let image = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
-    let side = image.width().min(image.height());
-    let square = image
-        .crop_imm(
-            (image.width() - side) / 2,
-            (image.height() - side) / 2,
-            side,
-            side,
-        )
-        .resize_exact(52, 52, image::imageops::FilterType::Triangle);
+    let fitted = image.resize(SIDE, SIDE, image::imageops::FilterType::Triangle);
+    let mut square = image::RgbaImage::new(SIDE, SIDE);
+    image::imageops::overlay(
+        &mut square,
+        &fitted.to_rgba8(),
+        i64::from((SIDE - fitted.width()) / 2),
+        i64::from((SIDE - fitted.height()) / 2),
+    );
     let mut out = Vec::new();
-    square
+    image::DynamicImage::ImageRgba8(square)
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
         .ok()?;
     Some(out)

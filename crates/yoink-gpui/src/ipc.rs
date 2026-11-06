@@ -1,8 +1,10 @@
 //! Hands a request to the running instance over a Unix socket. The client
 //! side runs before any UI code loads, so a summon costs one connect.
 
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
@@ -39,12 +41,12 @@ impl Request {
     }
 }
 
-pub fn socket_path(fallback_dir: &Path) -> PathBuf {
+/// The directory for the socket and its lock file.
+pub fn runtime_dir(fallback_dir: &Path) -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|dir| dir.is_dir())
         .unwrap_or_else(|| fallback_dir.to_path_buf())
-        .join("yoink-gpui.sock")
 }
 
 /// Returns `false` when no instance is listening.
@@ -57,27 +59,43 @@ pub fn send(path: &Path, request: Request) -> bool {
         .is_ok()
 }
 
-pub enum Bind {
-    Listening(UnixListener),
-    /// Another instance won the race to bind the socket.
-    AlreadyRunning,
+/// Held for the life of the running instance. Only the holder touches the
+/// socket file, so two launches cannot both judge it stale and race to
+/// replace it.
+pub struct InstanceLock {
+    _file: File,
 }
 
-pub fn bind(path: &Path) -> io::Result<Bind> {
-    let listener = match UnixListener::bind(path) {
-        Ok(listener) => listener,
-        Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
-            if UnixStream::connect(path).is_ok() {
-                return Ok(Bind::AlreadyRunning);
-            }
-            // Nothing accepts on the socket, so a crashed instance left it behind.
-            std::fs::remove_file(path)?;
-            UnixListener::bind(path)?
-        }
-        Err(error) => return Err(error),
-    };
+/// Returns `None` when another instance holds the lock.
+pub fn lock(path: &Path) -> io::Result<Option<InstanceLock>> {
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)?;
+    // SAFETY: flock only uses the descriptor, which `file` keeps open.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(Some(InstanceLock { _file: file }));
+    }
+    let error = io::Error::last_os_error();
+    if error.kind() == io::ErrorKind::WouldBlock {
+        Ok(None)
+    } else {
+        Err(error)
+    }
+}
+
+/// Binds the socket, replacing a file a crashed instance left behind. Call
+/// only while holding the [`InstanceLock`].
+pub fn bind(path: &Path, _lock: &InstanceLock) -> io::Result<UnixListener> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let listener = UnixListener::bind(path)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(Bind::Listening(listener))
+    Ok(listener)
 }
 
 /// Calls `handle` on a background thread for each request received.
@@ -101,23 +119,33 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn requests_reach_the_running_instance_and_stale_sockets_are_replaced() {
+    fn one_instance_owns_the_socket_and_receives_requests() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("yoink-gpui.sock");
-        assert!(!send(&path, Request::Toggle));
+        let socket = dir.path().join("yoink-gpui.sock");
+        let lock_path = dir.path().join("yoink-gpui.lock");
+        assert!(!send(&socket, Request::Toggle));
 
+        let lock = lock(&lock_path)
+            .unwrap()
+            .expect("the first launch takes the lock");
+        assert!(
+            super::lock(&lock_path).unwrap().is_none(),
+            "a second launch must not take over"
+        );
         // A socket file with no listener, as a crash leaves behind.
-        drop(UnixListener::bind(&path).unwrap());
-        let Bind::Listening(listener) = bind(&path).unwrap() else {
-            panic!("a stale socket must not count as a running instance");
-        };
-        assert!(matches!(bind(&path).unwrap(), Bind::AlreadyRunning));
+        drop(UnixListener::bind(&socket).unwrap());
+        let listener = bind(&socket, &lock).unwrap();
 
         let (tx, rx) = mpsc::channel();
         serve(listener, move |request| tx.send(request).unwrap());
         for request in [Request::Toggle, Request::Show, Request::Hide, Request::Quit] {
-            assert!(send(&path, request));
+            assert!(send(&socket, request));
             assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), request);
         }
+        drop(lock);
+        assert!(
+            super::lock(&lock_path).unwrap().is_some(),
+            "exit releases the lock"
+        );
     }
 }

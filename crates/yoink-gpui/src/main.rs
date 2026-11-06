@@ -5,7 +5,7 @@ mod text;
 mod tray;
 mod x11;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use futures::StreamExt as _;
@@ -14,6 +14,9 @@ use yoink_core::{Config, HistoryStore};
 
 use crate::app::{Message, Yoink};
 use crate::ipc::Request;
+
+const SOCKET: &str = "yoink-gpui.sock";
+const LOCK: &str = "yoink-gpui.lock";
 
 const USAGE: &str = "yoink-gpui - clipboard history for Linux X11
 
@@ -37,7 +40,7 @@ fn main() {
         [] => false,
         ["--hidden"] => true,
         ["--quit"] => {
-            ipc::send(&ipc::socket_path(&data_dir()), Request::Quit);
+            ipc::send(&ipc::runtime_dir(&data_dir()).join(SOCKET), Request::Quit);
             return;
         }
         _ => {
@@ -45,7 +48,8 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let socket = ipc::socket_path(&data_dir());
+    let runtime_dir = ipc::runtime_dir(&data_dir());
+    let socket = runtime_dir.join(SOCKET);
     // The fast path: a running instance does the work and this process exits
     // before loading any UI code.
     if ipc::send(
@@ -58,7 +62,7 @@ fn main() {
     ) {
         return;
     }
-    if let Err(error) = run(hidden, socket) {
+    if let Err(error) = run(hidden, &socket, &runtime_dir.join(LOCK)) {
         eprintln!("yoink-gpui: {error}");
         std::process::exit(1);
     }
@@ -79,7 +83,7 @@ fn data_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share")
 }
 
-fn run(hidden: bool, socket: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn run(hidden: bool, socket: &Path, lock: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = data_dir();
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -93,15 +97,20 @@ fn run(hidden: bool, socket: PathBuf) -> Result<(), Box<dyn std::error::Error>> 
     let config =
         Config::load(&config_path).map_err(|e| format!("{}: {e}", config_path.display()))?;
 
-    let listener = match ipc::bind(&socket)? {
-        ipc::Bind::Listening(listener) => listener,
-        ipc::Bind::AlreadyRunning => {
-            if !hidden {
-                ipc::send(&socket, Request::Toggle);
+    let Some(lock) = ipc::lock(lock)? else {
+        // Another launch holds the lock and is still starting; hand over once
+        // it listens.
+        if !hidden {
+            for _ in 0..100 {
+                if ipc::send(socket, Request::Toggle) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            return Ok(());
         }
+        return Ok(());
     };
+    let listener = ipc::bind(socket, &lock)?;
 
     let mut store = HistoryStore::open(&data_dir.join("history.sqlite"))?;
     store.set_max_items(config.max_items)?;

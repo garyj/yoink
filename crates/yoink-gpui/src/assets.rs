@@ -8,7 +8,7 @@ use gpui_kit::{AssetSource, Result, SharedString};
 
 icon_assets!(
     Extra,
-    [TextAlignStart, Braces, Link, ClipboardList, SearchX]
+    [TextAlignStart, Braces, Link, ClipboardList, SearchX, Trash]
 );
 
 pub struct AppAssets;

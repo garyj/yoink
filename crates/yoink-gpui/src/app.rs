@@ -1015,15 +1015,15 @@ impl Yoink {
                         .flex()
                         .flex_col()
                         .child(scroll_area)
-                        .when(self.preview_scroll.max_offset().x > px(0.), |code| {
-                            code.child(div().absolute().top_0().bottom_0().right_0().w(px(32.)).bg(
-                                linear_gradient(
-                                    90.,
-                                    linear_color_stop(palette.panel.opacity(0.), 0.),
-                                    linear_color_stop(palette.panel, 1.),
-                                ),
-                            ))
-                        })
+                        // Over empty space the fade is invisible, so it needs no
+                        // overflow check.
+                        .child(div().absolute().top_0().bottom_0().right_0().w(px(32.)).bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(palette.panel.opacity(0.), 0.),
+                                linear_color_stop(palette.panel, 1.),
+                            ),
+                        ))
                         .child(Scrollbar::new(&self.preview_scroll))
                         .into_any_element()
                 } else {

@@ -10,10 +10,12 @@ futures = "0.3"
 gpui-kit = "0.9.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 ksni = { version = "0.3.6", features = ["blocking"] }
+libc = "0.2"
 raw-window-handle = "0.6"
 x11rb = { version = "0.13", features = ["randr"] }
 yoink-clipboard = { path = "../yoink-clipboard" }
 yoink-core = { path = "../yoink-core" }
 
 [dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
 tempfile = "3.27.0"

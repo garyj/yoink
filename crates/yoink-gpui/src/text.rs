@@ -83,6 +83,41 @@ pub fn ago_long(now_ms: i64, then_ms: i64) -> String {
     format!("{count} {unit}{plural} ago")
 }
 
+/// Local wall-clock time: "Today at 14:22", "Yesterday at 09:10",
+/// "Mon 3 Nov at 10:30", or "3 Nov 2025".
+pub fn clock(now_ms: i64, then_ms: i64) -> String {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let (Some(now), Some(then)) = (local_time(now_ms), local_time(then_ms)) else {
+        return String::new();
+    };
+    let time = format!("{:02}:{:02}", then.tm_hour, then.tm_min);
+    let month = MONTHS[then.tm_mon.clamp(0, 11) as usize];
+    let day_gap = if now.tm_year == then.tm_year {
+        now.tm_yday - then.tm_yday
+    } else {
+        i32::MAX
+    };
+    match day_gap {
+        0 => format!("Today at {time}"),
+        1 => format!("Yesterday at {time}"),
+        2..=6 => format!("{} at {time}", DAYS[then.tm_wday.clamp(0, 6) as usize]),
+        _ if now.tm_year == then.tm_year => format!("{} {month} at {time}", then.tm_mday),
+        _ => format!("{} {month} {}", then.tm_mday, then.tm_year + 1900),
+    }
+}
+
+fn local_time(ms: i64) -> Option<libc::tm> {
+    let seconds = (ms / 1000) as libc::time_t;
+    // SAFETY: localtime_r writes only into the zeroed `tm` it is given.
+    unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        (!libc::localtime_r(&seconds, &mut tm).is_null()).then_some(tm)
+    }
+}
+
 /// `#rgb` or `#rrggbb`, as 0xRRGGBB.
 pub fn hex_color(text: &str) -> Option<u32> {
     let hex = text.trim().strip_prefix('#')?;

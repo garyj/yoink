@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::Scrollbar;
@@ -61,6 +60,7 @@ enum Kind {
     Color(u32),
     Image {
         thumb: Arc<Image>,
+        badge: Arc<Image>,
         width: u32,
         height: u32,
     },
@@ -215,11 +215,11 @@ impl Yoink {
     fn reload(&mut self, cx: &mut Context<Self>) {
         let query = self.search.read(cx).value().to_string();
         // Reusing an Arc<Image> keeps GPUI's decoded copy and skips rehashing.
-        let thumbs: HashMap<i64, Arc<Image>> = self
+        let images: HashMap<i64, (Arc<Image>, Arc<Image>)> = self
             .rows
             .iter()
             .filter_map(|row| match &row.kind {
-                Kind::Image { thumb, .. } => Some((row.id, thumb.clone())),
+                Kind::Image { thumb, badge, .. } => Some((row.id, (thumb.clone(), badge.clone()))),
                 _ => None,
             })
             .collect();
@@ -232,15 +232,20 @@ impl Yoink {
                 .map(|item| {
                     let kind = match item.kind {
                         ItemKind::Image => {
-                            let thumb = match thumbs.get(&item.id) {
-                                Some(thumb) => thumb.clone(),
-                                None => Arc::new(Image::from_bytes(
-                                    ImageFormat::Png,
-                                    store.thumbnail(item.id)?.unwrap_or_default(),
-                                )),
+                            let (thumb, badge) = match images.get(&item.id) {
+                                Some(images) => images.clone(),
+                                None => {
+                                    let png = store.thumbnail(item.id)?.unwrap_or_default();
+                                    let badge = square_badge(&png).unwrap_or_else(|| png.clone());
+                                    (
+                                        Arc::new(Image::from_bytes(ImageFormat::Png, png)),
+                                        Arc::new(Image::from_bytes(ImageFormat::Png, badge)),
+                                    )
+                                }
                             };
                             Kind::Image {
                                 thumb,
+                                badge,
                                 width: item.width.unwrap_or(0),
                                 height: item.height.unwrap_or(0),
                             }
@@ -367,7 +372,17 @@ impl Yoink {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
-        self.hide(window, cx);
+        if self.confirming_clear {
+            self.confirming_clear = false;
+            cx.notify();
+        } else if !self.search.read(cx).value().is_empty() {
+            self.search
+                .update(cx, |search, cx| search.set_value("", window, cx));
+            self.reload(cx);
+            self.select(0, cx);
+        } else {
+            self.hide(window, cx);
+        }
     }
 
     fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
@@ -412,20 +427,6 @@ impl Yoink {
     }
 
     fn clear_history(&mut self, cx: &mut Context<Self>) {
-        if !self.confirming_clear {
-            self.confirming_clear = true;
-            cx.notify();
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(Duration::from_secs(4)).await;
-                this.update(cx, |this, cx| {
-                    this.confirming_clear = false;
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
-            return;
-        }
         self.confirming_clear = false;
         if let Err(error) = self.store.lock().unwrap().clear() {
             self.error = Some(format!("Cannot clear history: {error}").into());
@@ -494,10 +495,10 @@ impl Palette {
                 panel: rgb(0x1b1c21).into(),
                 border: hsla(0., 0., 1., 0.07),
                 text: rgb(0xeceef2).into(),
-                muted: rgb(0x9a9ca8).into(),
-                faint: rgb(0x6b6e7a).into(),
+                muted: rgb(0xa0a4ae).into(),
+                faint: rgb(0x8a8e99).into(),
                 accent,
-                selected: hsla(35. / 360., 1., 0.55, 0.14),
+                selected: rgb(0x3f3020).into(),
                 hover: hsla(0., 0., 1., 0.04),
                 chip: hsla(0., 0., 1., 0.06),
                 danger: rgb(0xff6b62).into(),
@@ -508,10 +509,10 @@ impl Palette {
                 panel: rgb(0xffffff).into(),
                 border: hsla(0., 0., 0., 0.08),
                 text: rgb(0x1c1d22).into(),
-                muted: rgb(0x62656f).into(),
-                faint: rgb(0x9a9ca6).into(),
+                muted: rgb(0x5f6470).into(),
+                faint: rgb(0x6e7380).into(),
                 accent: rgb(0xf08a00).into(),
-                selected: hsla(35. / 360., 1., 0.5, 0.13),
+                selected: rgb(0xfbe6cb).into(),
                 hover: hsla(0., 0., 0., 0.035),
                 chip: hsla(0., 0., 0., 0.05),
                 danger: rgb(0xd93a31).into(),
@@ -531,6 +532,9 @@ pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
         theme.selection = palette.accent.opacity(0.3);
         theme.ring = palette.accent;
         theme.muted_foreground = palette.faint;
+        theme.scrollbar = transparent_black();
+        theme.scrollbar_thumb = palette.text.opacity(0.18);
+        theme.scrollbar_thumb_hover = palette.text.opacity(0.32);
     });
 }
 
@@ -618,7 +622,7 @@ impl Yoink {
                     Input::new(&self.search)
                         .appearance(false)
                         .large()
-                        .cleanable(false),
+                        .cleanable(true),
                 ),
             )
             .child(
@@ -682,9 +686,11 @@ impl Yoink {
         div()
             .id(index)
             .h(px(ROW_HEIGHT))
-            .px_1p5()
+            .pl_2()
+            .pr_3()
             .child(
                 div()
+                    .relative()
                     .size_full()
                     .flex()
                     .items_center()
@@ -692,7 +698,18 @@ impl Yoink {
                     .px_2p5()
                     .rounded(px(8.))
                     .cursor_pointer()
-                    .when(selected, |row| row.bg(palette.selected))
+                    .when(selected, |row| {
+                        row.bg(palette.selected).child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top(px(10.))
+                                .bottom(px(10.))
+                                .w(px(3.))
+                                .rounded_r(px(2.))
+                                .bg(palette.accent),
+                        )
+                    })
                     .when(!selected, |row| row.hover(move |style| style.bg(hover)))
                     .child(self.render_badge(row, selected, palette))
                     .child(
@@ -700,7 +717,7 @@ impl Yoink {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_sm()
+                            .text_size(px(13.5))
                             .text_color(if selected {
                                 palette.text
                             } else {
@@ -711,7 +728,7 @@ impl Yoink {
                     .child(
                         div()
                             .flex_none()
-                            .text_xs()
+                            .text_size(px(12.))
                             .text_color(if selected {
                                 palette.muted
                             } else {
@@ -775,10 +792,10 @@ impl Yoink {
                         .bg(rgb(*rgb_value)),
                 )
                 .into_any_element(),
-            Kind::Image { thumb, .. } => frame()
+            Kind::Image { badge, .. } => frame()
                 .border_1()
                 .border_color(palette.border)
-                .child(img(thumb.clone()).size_full().object_fit(ObjectFit::Cover))
+                .child(img(badge.clone()).size_full())
                 .into_any_element(),
         }
     }
@@ -833,6 +850,7 @@ impl Yoink {
                         thumb,
                         width,
                         height,
+                        ..
                     },
                     Preview::Image { image, bytes, .. },
                 ) => {
@@ -880,7 +898,8 @@ impl Yoink {
                             (
                                 range,
                                 HighlightStyle {
-                                    background_color: Some(palette.accent.opacity(0.28)),
+                                    color: Some(palette.accent),
+                                    font_weight: Some(FontWeight::SEMIBOLD),
                                     ..Default::default()
                                 },
                             )
@@ -890,14 +909,16 @@ impl Yoink {
                         .id("preview")
                         .size_full()
                         .track_scroll(&self.preview_scroll)
-                        .overflow_y_scroll()
-                        .px_6()
-                        .py_5()
+                        .when(monospace, |body| body.overflow_scroll())
+                        .when(!monospace, |body| body.overflow_y_scroll())
+                        .px_7()
+                        .py_6()
                         .child(
                             div()
-                                .w_full()
+                                .when(!monospace, |text| text.w_full())
                                 .when(monospace, |text| {
-                                    text.font_family(mono.clone())
+                                    text.whitespace_nowrap()
+                                        .font_family(mono.clone())
                                         .text_size(px(13.))
                                         .line_height(px(21.))
                                 })
@@ -920,17 +941,17 @@ impl Yoink {
                 }
                 _ => div().into_any_element(),
             };
-        facts.push(("Last copied", text::ago_long(now, row.copied_at_ms).into()));
+        let when = |ms: i64| -> SharedString {
+            format!("{} · {}", text::clock(now, ms), text::ago_long(now, ms)).into()
+        };
+        facts.push(("Last copied", when(row.copied_at_ms)));
         if row.first_copied_at_ms < row.copied_at_ms - 60_000 {
-            facts.push((
-                "First copied",
-                text::ago_long(now, row.first_copied_at_ms).into(),
-            ));
+            facts.push(("First copied", when(row.first_copied_at_ms)));
         }
 
         let information = div()
             .flex_none()
-            .px_6()
+            .px_7()
             .pt_3()
             .pb_2()
             .border_t_1()
@@ -938,7 +959,7 @@ impl Yoink {
             .child(
                 div()
                     .pb_1()
-                    .text_xs()
+                    .text_size(px(12.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.muted)
                     .child("Information"),
@@ -949,15 +970,15 @@ impl Yoink {
                     .enumerate()
                     .map(|(index, (label, value))| {
                         div()
-                            .h(px(28.))
+                            .h(px(26.))
                             .flex()
                             .items_center()
                             .justify_between()
                             .when(index > 0, |fact| {
                                 fact.border_t_1().border_color(palette.border)
                             })
-                            .text_xs()
-                            .child(div().text_color(palette.faint).child(label))
+                            .text_size(px(12.5))
+                            .child(div().text_color(palette.muted).child(label))
                             .child(div().text_color(palette.text.opacity(0.85)).child(value))
                     }),
             );
@@ -995,7 +1016,7 @@ impl Yoink {
             (
                 Icons::SearchX,
                 format!("No matches for \u{201c}{query}\u{201d}").into(),
-                "Search looks at text items. Images are listed when the search is empty.".into(),
+                "Search covers text items. Clear the search to see everything.".into(),
             )
         };
         div()
@@ -1021,19 +1042,27 @@ impl Yoink {
                     .font_weight(FontWeight::MEDIUM)
                     .child(title),
             )
-            .child(div().text_sm().text_color(palette.faint).child(description))
+            .child(
+                div()
+                    .text_size(px(13.5))
+                    .text_color(palette.muted)
+                    .child(description),
+            )
     }
 
     fn render_footer(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let hint = |keys: &[&'static str], label: &'static str| {
+        let enabled = !self.rows.is_empty();
+        let hint = |keys: &[&'static str], label: &'static str, primary: bool, dims: bool| {
+            let color = if primary { palette.text } else { palette.muted };
             div()
                 .flex()
                 .items_center()
                 .gap_1p5()
+                .when(dims && !enabled, |hint| hint.opacity(0.4))
                 .children(keys.iter().map(|key| {
                     div()
-                        .min_w(px(20.))
-                        .h(px(20.))
+                        .min_w(px(22.))
+                        .h(px(22.))
                         .px_1p5()
                         .flex()
                         .items_center()
@@ -1042,55 +1071,119 @@ impl Yoink {
                         .bg(palette.chip)
                         .border_1()
                         .border_color(palette.border)
-                        .text_xs()
-                        .text_color(palette.muted)
+                        .text_size(px(12.))
+                        .text_color(color)
                         .child(*key)
                 }))
-                .child(div().text_xs().text_color(palette.faint).child(label))
+                .child(div().text_size(px(12.5)).text_color(color).child(label))
         };
-        let danger = palette.danger;
-        let muted = palette.faint;
-        let has_items = !self.rows.is_empty() || self.total > 0;
+        let button = |id: &'static str, label: SharedString| {
+            div()
+                .id(id)
+                .h(px(26.))
+                .px_2p5()
+                .flex()
+                .items_center()
+                .rounded(px(6.))
+                .cursor_pointer()
+                .text_size(px(12.5))
+                .child(label)
+        };
+        let (danger, muted, hover) = (palette.danger, palette.muted, palette.hover);
+        let searching = !self.search.read(cx).value().is_empty();
+        let can_clear = self.total > 0 && !searching;
+        let esc_label = if self.confirming_clear {
+            "Cancel"
+        } else if searching {
+            "Clear search"
+        } else {
+            "Close"
+        };
+        let right = if !can_clear {
+            div().into_any_element()
+        } else if self.confirming_clear {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_size(px(12.5))
+                        .text_color(palette.text)
+                        .child("Delete all history?"),
+                )
+                .child(
+                    button("cancel-clear", "Cancel".into())
+                        .text_color(muted)
+                        .hover(move |style| style.bg(hover))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirming_clear = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    button(
+                        "confirm-clear",
+                        format!(
+                            "Clear {} {}",
+                            text::thousands(self.total),
+                            plural(self.total, "item", "items")
+                        )
+                        .into(),
+                    )
+                    .bg(danger)
+                    .text_color(white())
+                    .font_weight(FontWeight::MEDIUM)
+                    .hover(move |style| style.bg(danger.opacity(0.85)))
+                    .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
+                )
+                .into_any_element()
+        } else {
+            button("clear", "Clear history".into())
+                .text_color(muted)
+                .hover(move |style| style.text_color(danger).bg(hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.confirming_clear = true;
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
         div()
-            .h(px(42.))
+            .h(px(46.))
             .flex_none()
             .flex()
             .items_center()
-            .gap_5()
-            .px_4()
+            .gap_6()
+            .pl_4()
+            .pr_2p5()
             .border_t_1()
             .border_color(palette.border)
-            .child(hint(&["↑", "↓"], "Navigate"))
-            .child(hint(&["↵"], "Copy"))
-            .child(hint(&["⇧", "Del"], "Delete"))
-            .child(hint(&["Esc"], "Close"))
+            .child(hint(&["↵"], "Copy", true, true))
+            .child(hint(&["↑", "↓"], "Navigate", false, true))
+            .child(hint(&["⇧ Del"], "Delete", false, true))
+            .child(hint(&["Esc"], esc_label, false, false))
             .child(div().flex_1())
-            .when(
-                has_items && self.search.read(cx).value().is_empty(),
-                |footer| {
-                    footer.child(
-                        div()
-                            .id("clear")
-                            .px_2()
-                            .py_1()
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .text_xs()
-                            .text_color(if self.confirming_clear { danger } else { muted })
-                            .hover(move |style| style.text_color(danger))
-                            .child(if self.confirming_clear {
-                                format!(
-                                    "Click again to clear {} items",
-                                    text::thousands(self.total)
-                                )
-                            } else {
-                                "Clear history".to_string()
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
-                    )
-                },
-            )
+            .child(right)
     }
+}
+
+/// A centered square crop of a thumbnail, at twice the badge size.
+fn square_badge(png: &[u8]) -> Option<Vec<u8>> {
+    let image = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
+    let side = image.width().min(image.height());
+    let square = image
+        .crop_imm(
+            (image.width() - side) / 2,
+            (image.height() - side) / 2,
+            side,
+            side,
+        )
+        .resize_exact(52, 52, image::imageops::FilterType::Triangle);
+    let mut out = Vec::new();
+    square
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
+    Some(out)
 }
 
 fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
@@ -1102,5 +1195,96 @@ fn human_bytes(bytes: usize) -> String {
         0..1024 => format!("{bytes} B"),
         1024..1_048_576 => format!("{:.0} KB", bytes as f64 / 1024.),
         _ => format!("{:.1} MB", bytes as f64 / 1_048_576.),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex, mpsc};
+    use std::time::Duration;
+
+    use gpui_kit::{AppContext as _, Bounds, Point, TestAppContext, WindowBounds, WindowOptions};
+    use yoink_clipboard as clipboard;
+    use yoink_core::HistoryStore;
+
+    use super::{Message, Yoink, bind_keys, window_size};
+    use crate::ipc::Request;
+
+    #[gpui::test]
+    fn search_copy_and_delete_from_the_keyboard(cx: &mut TestAppContext) {
+        let store = Arc::new(Mutex::new(HistoryStore::open_in_memory().unwrap()));
+        {
+            let mut store = store.lock().unwrap();
+            store.record_text("git status --short", 1_000).unwrap();
+            store.record_text("Café notes for Friday", 2_000).unwrap();
+            store.record_text("#ff9900", 3_000).unwrap();
+        }
+        // Stands in for the X11 clipboard: records each write and confirms it.
+        let (clipboard_tx, clipboard_rx) = mpsc::channel::<clipboard::Write>();
+        let (copied_tx, copied) = mpsc::channel();
+        std::thread::spawn(move || {
+            for write in clipboard_rx {
+                if let clipboard::Content::Text(text) = write.content {
+                    copied_tx.send(text).unwrap();
+                }
+                write.reply.send(Ok(())).unwrap();
+            }
+        });
+        let (x11_tx, _x11_rx) = mpsc::channel();
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            bind_keys(cx);
+        });
+        let (window, view) = cx.update(|cx| {
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Point::default(),
+                    window_size(),
+                ))),
+                ..Default::default()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Yoink::new(store.clone(), clipboard_tx, x11_tx, true, window, cx))
+            })
+            .unwrap()
+        });
+        let titles = |cx: &mut TestAppContext| {
+            view.read_with(cx, |view, _| {
+                view.rows
+                    .iter()
+                    .map(|row| row.title.to_string())
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(
+            titles(cx),
+            ["#ff9900", "Café notes for Friday", "git status --short"]
+        );
+
+        cx.simulate_input(window, "cafe");
+        assert_eq!(titles(cx), ["Café notes for Friday"]);
+
+        cx.simulate_keystrokes(window, "enter");
+        cx.run_until_parked();
+        assert_eq!(
+            copied.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "Café notes for Friday"
+        );
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert!(!view.shown, "a copy hides the window");
+            assert_eq!(view.search.read(cx).value(), "", "a copy clears the search");
+        });
+
+        cx.update_window(window, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.handle(Message::Request(Request::Show), window, cx)
+            })
+        })
+        .unwrap();
+        cx.simulate_keystrokes(window, "down shift-delete");
+        assert_eq!(titles(cx), ["#ff9900", "git status --short"]);
+        assert_eq!(store.lock().unwrap().len().unwrap(), 2);
     }
 }

@@ -26,7 +26,7 @@ gpui_kit::actions!(
 );
 
 const CONTEXT: &str = "Yoink";
-const ROW_HEIGHT: f32 = 44.;
+const ROW_HEIGHT: f32 = 46.;
 const PAGE_ROWS: usize = 8;
 const LIST_WIDTH: f32 = 372.;
 
@@ -54,6 +54,7 @@ pub enum Message {
 
 enum Kind {
     Text,
+    Code,
     Link,
     Color(u32),
     Image {
@@ -257,6 +258,7 @@ impl Yoink {
                         ItemKind::Text => match text::hex_color(&item.text) {
                             Some(rgb) => Kind::Color(rgb),
                             None if text::is_link(&item.text) => Kind::Link,
+                            None if text::looks_like_code(&item.text) => Kind::Code,
                             None => Kind::Text,
                         },
                     };
@@ -504,18 +506,18 @@ impl Palette {
         if dark {
             Self {
                 background: rgb(0x16171b).into(),
-                panel: rgb(0x1b1c21).into(),
-                border: hsla(0., 0., 1., 0.07),
+                panel: rgb(0x1d1e24).into(),
+                border: hsla(0., 0., 1., 0.11),
                 text: rgb(0xeceef2).into(),
                 muted: rgb(0xa0a4ae).into(),
-                faint: rgb(0x9ca3af).into(),
+                faint: rgb(0xb0b5bf).into(),
                 accent,
                 selected: hsla(0., 0., 1., 0.075),
                 edge: hsla(0., 0., 1., 0.14),
                 hover: hsla(0., 0., 1., 0.04),
                 chip: hsla(0., 0., 1., 0.06),
                 danger: rgb(0xe5484d).into(),
-                matched: hsla(35. / 360., 1., 0.55, 0.3),
+                matched: hsla(35. / 360., 1., 0.55, 0.42),
             }
         } else {
             Self {
@@ -524,7 +526,7 @@ impl Palette {
                 border: hsla(0., 0., 0., 0.08),
                 text: rgb(0x1c1d22).into(),
                 muted: rgb(0x5f6470).into(),
-                faint: rgb(0x6b7280).into(),
+                faint: rgb(0x5c616b).into(),
                 accent: rgb(0xf08a00).into(),
                 selected: hsla(0., 0., 0., 0.055),
                 edge: hsla(0., 0., 0., 0.12),
@@ -547,6 +549,7 @@ pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
         theme.caret = palette.accent;
         theme.selection = palette.accent.opacity(0.3);
         theme.ring = palette.accent;
+        theme.cursor_blink = gpui_kit::base::input::CursorBlink::steady();
         theme.muted_foreground = palette.faint;
         theme.scrollbar = transparent_black();
         theme.scrollbar_thumb = palette.text.opacity(0.3);
@@ -555,7 +558,7 @@ pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
 }
 
 impl Render for Yoink {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::new(cx.theme().mode.is_dark());
         div()
             .key_context(CONTEXT)
@@ -581,12 +584,13 @@ impl Render for Yoink {
                     .flex()
                     .border_t_1()
                     .border_color(palette.border)
+                    .when(self.confirming_clear, |body| body.opacity(0.55))
                     .map(|body| {
                         if self.rows.is_empty() {
                             body.child(self.render_empty(&palette, cx))
                         } else {
                             body.child(self.render_list(&palette, cx))
-                                .child(self.render_preview(&palette, cx))
+                                .child(self.render_preview(&palette, window, cx))
                         }
                     }),
             )
@@ -627,7 +631,7 @@ impl Yoink {
             .flex()
             .items_center()
             .gap_3()
-            .pl_5()
+            .pl(px(19.))
             .pr_6()
             .child(
                 Icon::new(Icons::Search)
@@ -645,7 +649,7 @@ impl Yoink {
             .child(
                 div()
                     .flex_none()
-                    .text_xs()
+                    .text_size(px(12.5))
                     .text_color(palette.faint)
                     .child(count),
             )
@@ -704,7 +708,8 @@ impl Yoink {
         div()
             .id(index)
             .h(px(ROW_HEIGHT))
-            .px_2()
+            .pl_2()
+            .pr_3p5()
             .child(
                 div()
                     .relative()
@@ -794,21 +799,12 @@ impl Yoink {
         };
         match &row.kind {
             Kind::Text => icon(Icons::TextAlignStart),
+            Kind::Code => icon(Icons::Braces),
             Kind::Link => icon(Icons::Link),
-            Kind::Color(rgb_value) => div()
-                .size(px(26.))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .size(px(18.))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(palette.border)
-                        .bg(rgb(*rgb_value)),
-                )
+            Kind::Color(rgb_value) => frame()
+                .border_1()
+                .border_color(palette.edge)
+                .bg(rgb(*rgb_value))
                 .into_any_element(),
             Kind::Image { badge, .. } => frame()
                 .border_1()
@@ -818,7 +814,12 @@ impl Yoink {
         }
     }
 
-    fn render_preview(&self, palette: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_preview(
+        &self,
+        palette: &Palette,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let now = clipboard::now_ms();
         let Some(row) = self.rows.get(self.selected) else {
             return div().flex_1().into_any_element();
@@ -829,11 +830,10 @@ impl Yoink {
             match (&row.kind, &self.preview) {
                 (Kind::Color(value), _) => {
                     facts.push(("Type", "Color".into()));
-                    facts.push(("Hex", format!("#{value:06x}").into()));
                     facts.push((
-                        "RGB",
+                        "Value",
                         format!(
-                            "{}, {}, {}",
+                            "#{value:06x} · rgb({}, {}, {})",
                             value >> 16 & 0xff,
                             value >> 8 & 0xff,
                             value & 0xff
@@ -874,11 +874,14 @@ impl Yoink {
                     Preview::Image { image, bytes, .. },
                 ) => {
                     facts.push(("Type", "Image".into()));
-                    facts.push(("Dimensions", format!("{width} × {height} pixels").into()));
-                    if *bytes > 0 {
-                        facts.push(("Size", human_bytes(*bytes).into()));
-                    }
+                    let size = if *bytes > 0 {
+                        format!("{width} × {height} pixels · {}", human_bytes(*bytes))
+                    } else {
+                        format!("{width} × {height} pixels")
+                    };
+                    facts.push(("Size", size.into()));
                     let image = image.clone().unwrap_or_else(|| thumb.clone());
+                    let fitted = fit_image(*width, *height, preview_area(window));
                     div()
                         .size_full()
                         .p_6()
@@ -887,9 +890,8 @@ impl Yoink {
                         .justify_center()
                         .child(
                             img(image)
-                                .max_w_full()
-                                .max_h_full()
-                                .object_fit(ObjectFit::Contain)
+                                .w(fitted.width)
+                                .h(fitted.height)
                                 .rounded(px(6.))
                                 .border_1()
                                 .border_color(palette.edge),
@@ -909,10 +911,25 @@ impl Yoink {
                     },
                 ) => {
                     let link = matches!(kind, Kind::Link);
-                    facts.push(("Type", if link { "Link" } else { "Text" }.into()));
-                    facts.push(("Characters", text::thousands(*chars).into()));
-                    facts.push(("Words", text::thousands(*words).into()));
-                    facts.push(("Lines", text::thousands(*lines).into()));
+                    let kind_name = match kind {
+                        Kind::Link => "Link",
+                        Kind::Code => "Code",
+                        _ => "Text",
+                    };
+                    facts.push(("Type", kind_name.into()));
+                    facts.push((
+                        "Length",
+                        format!(
+                            "{} {} · {} {} · {} {}",
+                            text::thousands(*chars),
+                            plural(*chars, "character", "characters"),
+                            text::thousands(*words),
+                            plural(*words, "word", "words"),
+                            text::thousands(*lines),
+                            plural(*lines, "line", "lines")
+                        )
+                        .into(),
+                    ));
                     let monospace = *lines > 1;
                     let styled = StyledText::new(body.clone()).with_highlights(
                         highlights.iter().cloned().map(|range| {
@@ -975,52 +992,42 @@ impl Yoink {
             facts.push(("First copied", when(row.first_copied_at_ms)));
         }
 
-        let fact = |label: &'static str, value: SharedString| {
-            div()
-                .flex_1()
-                .min_w_0()
-                .h(px(24.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .text_size(px(12.5))
-                .child(div().flex_none().text_color(palette.muted).child(label))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(palette.text.opacity(0.88))
-                        .child(value),
-                )
-        };
-        let (times, counts): (Vec<_>, Vec<_>) = facts
-            .into_iter()
-            .partition(|(label, _)| label.ends_with("copied"));
         let information = div()
             .flex_none()
-            .h(px(136.))
+            .h(px(128.))
             .px_6()
-            .pt_2p5()
-            .pb_2()
+            .pt_3()
             .border_t_1()
             .border_color(palette.border)
             .child(
                 div()
-                    .pb_1()
+                    .pb_1p5()
                     .text_size(px(11.5))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.faint)
                     .child("Information"),
             )
-            .children(counts.chunks(2).map(|pair| {
+            .children(facts.into_iter().map(|(label, value)| {
                 div()
+                    .h(px(22.))
                     .flex()
-                    .gap_8()
-                    .children(pair.iter().map(|(label, value)| fact(label, value.clone())))
-                    .when(pair.len() == 1, |row| row.child(div().flex_1()))
-            }))
-            .children(times.into_iter().map(|(label, value)| fact(label, value)));
+                    .items_center()
+                    .text_size(px(12.5))
+                    .child(
+                        div()
+                            .w(px(96.))
+                            .flex_none()
+                            .text_color(palette.muted)
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(palette.text.opacity(0.9))
+                            .child(value),
+                    )
+            }));
 
         div()
             .flex_1()
@@ -1133,7 +1140,7 @@ impl Yoink {
             .flex()
             .items_center()
             .gap_6()
-            .pl_5()
+            .pl(px(19.))
             .pr_3p5()
             .border_t_1()
             .border_color(palette.border);
@@ -1145,13 +1152,18 @@ impl Yoink {
                 text::thousands(self.total),
                 plural(self.total, "item", "items")
             );
+            let dark = cx.theme().mode.is_dark();
             return footer
-                .bg(danger.opacity(0.08))
+                .bg(danger.opacity(if dark { 0.2 } else { 0.09 }))
                 .child(
                     div()
                         .flex_1()
                         .text_size(px(13.))
-                        .text_color(palette.text)
+                        .text_color(if dark {
+                            rgb(0xffd7d4).into()
+                        } else {
+                            palette.text
+                        })
                         .child(format!("Delete all {count}? This cannot be undone.")),
                 )
                 .child(hint(&["Esc"], "Cancel", false))
@@ -1194,8 +1206,8 @@ impl Yoink {
                 footer.child(
                     div()
                         .id("clear")
-                        .h(px(30.))
-                        .px_2p5()
+                        .h(px(32.))
+                        .px_3()
                         .flex()
                         .items_center()
                         .rounded(px(6.))
@@ -1213,6 +1225,26 @@ impl Yoink {
     }
 }
 
+/// The space the image preview can fill: the pane right of the list, above
+/// the Information table, inside a 24 px margin.
+fn preview_area(window: &Window) -> Size<Pixels> {
+    let viewport = window.viewport_size();
+    size(
+        viewport.width - px(LIST_WIDTH + 2. + 48.),
+        viewport.height - px(60. + 46. + 128. + 4. + 48.),
+    )
+}
+
+/// The largest size with the image's aspect ratio that fits `area`, never
+/// enlarging the image.
+fn fit_image(width: u32, height: u32, area: Size<Pixels>) -> Size<Pixels> {
+    let (width, height) = (width.max(1) as f32, height.max(1) as f32);
+    let scale = (f32::from(area.width) / width)
+        .min(f32::from(area.height) / height)
+        .min(1.);
+    size(px(width * scale), px(height * scale))
+}
+
 /// Fades rows into the list edge, so a partly scrolled row reads as cut off
 /// on purpose.
 fn edge_fade(background: Hsla, top: bool) -> Div {
@@ -1220,7 +1252,7 @@ fn edge_fade(background: Hsla, top: bool) -> Div {
         .absolute()
         .left_0()
         .right_0()
-        .h(px(8.))
+        .h(px(if top { 8. } else { 16. }))
         .bg(linear_gradient(
             if top { 180. } else { 0. },
             linear_color_stop(background, 0.),
@@ -1229,21 +1261,21 @@ fn edge_fade(background: Hsla, top: bool) -> Div {
     if top { fade.top_0() } else { fade.bottom_0() }
 }
 
-/// The thumbnail fitted into a transparent square at twice the badge size,
-/// so wide and tall images keep their shape.
+/// A centered square crop of a thumbnail at twice the badge size, so every
+/// badge fills the same square.
 fn square_badge(png: &[u8]) -> Option<Vec<u8>> {
-    const SIDE: u32 = 52;
     let image = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
-    let fitted = image.resize(SIDE, SIDE, image::imageops::FilterType::Triangle);
-    let mut square = image::RgbaImage::new(SIDE, SIDE);
-    image::imageops::overlay(
-        &mut square,
-        &fitted.to_rgba8(),
-        i64::from((SIDE - fitted.width()) / 2),
-        i64::from((SIDE - fitted.height()) / 2),
-    );
+    let side = image.width().min(image.height());
+    let square = image
+        .crop_imm(
+            (image.width() - side) / 2,
+            (image.height() - side) / 2,
+            side,
+            side,
+        )
+        .resize_exact(52, 52, image::imageops::FilterType::Triangle);
     let mut out = Vec::new();
-    image::DynamicImage::ImageRgba8(square)
+    square
         .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
         .ok()?;
     Some(out)

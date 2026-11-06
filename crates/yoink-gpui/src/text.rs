@@ -155,6 +155,15 @@ pub fn link_title(link: &str) -> String {
     }
 }
 
+/// Multi-line text with braces, semicolons, or arrows, such as source code or
+/// JSON. Prose and single shell commands stay plain text.
+pub fn looks_like_code(text: &str) -> bool {
+    text.trim().lines().nth(1).is_some()
+        && ["{", "}", ";", "=>", "</", "();"]
+            .iter()
+            .any(|mark| text.contains(mark))
+}
+
 pub fn is_link(text: &str) -> bool {
     let text = text.trim();
     (text.starts_with("https://") || text.starts_with("http://"))

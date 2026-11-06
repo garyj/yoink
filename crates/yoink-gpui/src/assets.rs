@@ -6,7 +6,10 @@ use std::borrow::Cow;
 use gpui_kit::assets::{Assets, icon_assets};
 use gpui_kit::{AssetSource, Result, SharedString};
 
-icon_assets!(Extra, [TextAlignStart, Link, ClipboardList, SearchX]);
+icon_assets!(
+    Extra,
+    [TextAlignStart, Braces, Link, ClipboardList, SearchX]
+);
 
 pub struct AppAssets;
 

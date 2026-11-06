@@ -20,6 +20,10 @@ dev:
 build:
     bun run tauri build --no-bundle -- --locked
 
+# Build the GPUI release binary.
+build-gpui:
+    cargo build --locked --release -p yoink-gpui
+
 # Run Rust tests. Pass a name to run one test.
 test *args:
     cargo test --locked --workspace {{ args }}

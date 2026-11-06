@@ -28,10 +28,10 @@ gpui_kit::actions!(
 const CONTEXT: &str = "Yoink";
 const ROW_HEIGHT: f32 = 46.;
 const PAGE_ROWS: usize = 8;
-const LIST_WIDTH: f32 = 372.;
+const LIST_WIDTH: f32 = 400.;
 
 pub fn window_size() -> Size<Pixels> {
-    size(px(880.), px(540.))
+    size(px(920.), px(540.))
 }
 
 pub fn bind_keys(cx: &mut App) {
@@ -99,8 +99,7 @@ pub struct Yoink {
     search: Entity<InputState>,
     rows: Vec<Row>,
     total: usize,
-    /// Every stored item, whatever the query.
-    stored: usize,
+
     selected: usize,
     list_scroll: UniformListScrollHandle,
     preview: Preview,
@@ -142,7 +141,7 @@ impl Yoink {
             search,
             rows: Vec::new(),
             total: 0,
-            stored: 0,
+
             selected: 0,
             list_scroll: UniformListScrollHandle::new(),
             preview: Preview::Empty,
@@ -230,7 +229,7 @@ impl Yoink {
         let result = (|| {
             let store = self.store.lock().unwrap();
             let total = store.count_matches(&query)?;
-            let stored = store.len()?;
+
             let items = store.preview_page(&query, store.max_items(), 0)?;
             let rows = items
                 .into_iter()
@@ -277,12 +276,11 @@ impl Yoink {
                     })
                 })
                 .collect::<yoink_core::Result<Vec<_>>>()?;
-            yoink_core::Result::Ok((total, stored, rows))
+            yoink_core::Result::Ok((total, rows))
         })();
         match result {
-            Ok((total, stored, rows)) => {
+            Ok((total, rows)) => {
                 self.total = total;
-                self.stored = stored;
                 self.rows = rows;
             }
             Err(error) => self.error = Some(format!("Cannot load history: {error}").into()),
@@ -620,9 +618,9 @@ impl Yoink {
             )
         } else {
             format!(
-                "{} of {}",
+                "{} {}",
                 text::thousands(self.total),
-                text::thousands(self.stored)
+                plural(self.total, "match", "matches")
             )
         };
         div()
@@ -739,7 +737,7 @@ impl Yoink {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(13.5))
+                            .text_size(px(14.))
                             .text_color(if selected {
                                 palette.text
                             } else {
@@ -826,132 +824,141 @@ impl Yoink {
         };
         let mono = cx.theme().mono_font_family.clone();
         let mut facts: Vec<(&'static str, SharedString)> = Vec::new();
-        let body =
-            match (&row.kind, &self.preview) {
-                (Kind::Color(value), _) => {
-                    facts.push(("Type", "Color".into()));
-                    facts.push((
-                        "Value",
-                        format!(
-                            "#{value:06x} · rgb({}, {}, {})",
-                            value >> 16 & 0xff,
-                            value >> 8 & 0xff,
-                            value & 0xff
+        let body = match (&row.kind, &self.preview) {
+            (Kind::Color(value), _) => {
+                facts.push(("Type", "Color".into()));
+                facts.push((
+                    "Value",
+                    format!(
+                        "#{value:06x} · rgb({}, {}, {})",
+                        value >> 16 & 0xff,
+                        value >> 8 & 0xff,
+                        value & 0xff
+                    )
+                    .into(),
+                ));
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_4()
+                    .child(
+                        div()
+                            .size(px(112.))
+                            .rounded(px(16.))
+                            .border_1()
+                            .border_color(palette.edge)
+                            .shadow_lg()
+                            .bg(rgb(*value)),
+                    )
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_family(mono.clone())
+                            .child(row.title.clone()),
+                    )
+                    .into_any_element()
+            }
+            (
+                Kind::Image {
+                    thumb,
+                    width,
+                    height,
+                    ..
+                },
+                Preview::Image { image, bytes, .. },
+            ) => {
+                facts.push(("Type", "Image".into()));
+                let size = if *bytes > 0 {
+                    format!("{width} × {height} pixels · {}", human_bytes(*bytes))
+                } else {
+                    format!("{width} × {height} pixels")
+                };
+                let caption: SharedString = size.into();
+                facts.push(("Size", caption.clone()));
+                let image = image.clone().unwrap_or_else(|| thumb.clone());
+                let fitted = fit_image(*width, *height, preview_area(window));
+                div()
+                    .size_full()
+                    .p_6()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_2p5()
+                    .child(
+                        img(image)
+                            .w(fitted.width)
+                            .h(fitted.height)
+                            .rounded(px(6.))
+                            .border_1()
+                            .border_color(palette.edge),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(palette.faint)
+                            .child(caption),
+                    )
+                    .into_any_element()
+            }
+            (
+                kind,
+                Preview::Text {
+                    body,
+                    highlights,
+                    chars,
+                    words,
+                    lines,
+                    shown_chars,
+                    ..
+                },
+            ) => {
+                let link = matches!(kind, Kind::Link);
+                let kind_name = match kind {
+                    Kind::Link => "Link",
+                    Kind::Code => "Code",
+                    _ => "Text",
+                };
+                facts.push(("Type", kind_name.into()));
+                facts.push((
+                    "Length",
+                    format!(
+                        "{} {} · {} {} · {} {}",
+                        text::thousands(*chars),
+                        plural(*chars, "character", "characters"),
+                        text::thousands(*words),
+                        plural(*words, "word", "words"),
+                        text::thousands(*lines),
+                        plural(*lines, "line", "lines")
+                    )
+                    .into(),
+                ));
+                let monospace = *lines > 1;
+                let styled = StyledText::new(body.clone()).with_highlights(
+                    highlights.iter().cloned().map(|range| {
+                        (
+                            range,
+                            HighlightStyle {
+                                background_color: Some(palette.matched),
+                                ..Default::default()
+                            },
                         )
-                        .into(),
-                    ));
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap_4()
-                        .child(
-                            div()
-                                .size(px(112.))
-                                .rounded(px(16.))
-                                .border_1()
-                                .border_color(palette.edge)
-                                .shadow_lg()
-                                .bg(rgb(*value)),
-                        )
-                        .child(
-                            div()
-                                .text_lg()
-                                .font_family(mono.clone())
-                                .child(row.title.clone()),
-                        )
-                        .into_any_element()
-                }
-                (
-                    Kind::Image {
-                        thumb,
-                        width,
-                        height,
-                        ..
-                    },
-                    Preview::Image { image, bytes, .. },
-                ) => {
-                    facts.push(("Type", "Image".into()));
-                    let size = if *bytes > 0 {
-                        format!("{width} × {height} pixels · {}", human_bytes(*bytes))
-                    } else {
-                        format!("{width} × {height} pixels")
-                    };
-                    facts.push(("Size", size.into()));
-                    let image = image.clone().unwrap_or_else(|| thumb.clone());
-                    let fitted = fit_image(*width, *height, preview_area(window));
-                    div()
-                        .size_full()
-                        .p_6()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            img(image)
-                                .w(fitted.width)
-                                .h(fitted.height)
-                                .rounded(px(6.))
-                                .border_1()
-                                .border_color(palette.edge),
-                        )
-                        .into_any_element()
-                }
-                (
-                    kind,
-                    Preview::Text {
-                        body,
-                        highlights,
-                        chars,
-                        words,
-                        lines,
-                        shown_chars,
-                        ..
-                    },
-                ) => {
-                    let link = matches!(kind, Kind::Link);
-                    let kind_name = match kind {
-                        Kind::Link => "Link",
-                        Kind::Code => "Code",
-                        _ => "Text",
-                    };
-                    facts.push(("Type", kind_name.into()));
-                    facts.push((
-                        "Length",
-                        format!(
-                            "{} {} · {} {} · {} {}",
-                            text::thousands(*chars),
-                            plural(*chars, "character", "characters"),
-                            text::thousands(*words),
-                            plural(*words, "word", "words"),
-                            text::thousands(*lines),
-                            plural(*lines, "line", "lines")
-                        )
-                        .into(),
-                    ));
-                    let monospace = *lines > 1;
-                    let styled = StyledText::new(body.clone()).with_highlights(
-                        highlights.iter().cloned().map(|range| {
-                            (
-                                range,
-                                HighlightStyle {
-                                    background_color: Some(palette.matched),
-                                    ..Default::default()
-                                },
-                            )
-                        }),
-                    );
+                    }),
+                );
+                let scroll_area =
                     div()
                         .id("preview")
-                        .size_full()
                         .track_scroll(&self.preview_scroll)
                         .when(monospace, |body| {
                             // A column flexbox keeps the code at its natural width,
                             // so long lines widen the scroll area instead of clipping.
                             body.overflow_scroll().flex().flex_col().items_start()
                         })
-                        .when(!monospace, |body| body.overflow_y_scroll())
+                        .when(!monospace, |body| body.size_full().overflow_y_scroll())
+                        .when(monospace, |body| body.min_h_0())
                         .px_6()
                         .py_6()
                         .child(
@@ -979,11 +986,24 @@ impl Yoink {
                                     text::thousands(*chars)
                                 ),
                             ))
-                        })
+                        });
+                if monospace {
+                    // The box hugs the code, so its scrollbars sit right under it.
+                    div()
+                        .relative()
+                        .w_full()
+                        .max_h_full()
+                        .flex()
+                        .flex_col()
+                        .child(scroll_area)
+                        .child(Scrollbar::new(&self.preview_scroll).mode(ScrollbarMode::Always))
                         .into_any_element()
+                } else {
+                    scroll_area.into_any_element()
                 }
-                _ => div().into_any_element(),
-            };
+            }
+            _ => div().into_any_element(),
+        };
         let when = |ms: i64| -> SharedString {
             format!("{} · {}", text::clock(now, ms), text::ago_long(now, ms)).into()
         };
@@ -1036,25 +1056,10 @@ impl Yoink {
             .flex()
             .flex_col()
             .bg(palette.panel)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(body)
-                    .when(
-                        matches!(self.preview, Preview::Text { lines: 2.., .. }),
-                        |body| {
-                            body.child(
-                                Scrollbar::new(&self.preview_scroll).mode(ScrollbarMode::Always),
-                            )
-                        },
-                    )
-                    .when(
-                        matches!(self.preview, Preview::Text { lines: 1, .. }),
-                        |body| body.child(Scrollbar::vertical(&self.preview_scroll)),
-                    ),
-            )
+            .child(div().relative().flex_1().min_h_0().child(body).when(
+                matches!(self.preview, Preview::Text { lines: 1, .. }),
+                |body| body.child(Scrollbar::vertical(&self.preview_scroll)),
+            ))
             .child(information)
             .into_any_element()
     }
@@ -1158,7 +1163,8 @@ impl Yoink {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(13.))
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(if dark {
                             rgb(0xffd7d4).into()
                         } else {
@@ -1226,12 +1232,12 @@ impl Yoink {
 }
 
 /// The space the image preview can fill: the pane right of the list, above
-/// the Information table, inside a 24 px margin.
+/// the Information table, inside a 24 px margin and above the size caption.
 fn preview_area(window: &Window) -> Size<Pixels> {
     let viewport = window.viewport_size();
     size(
         viewport.width - px(LIST_WIDTH + 2. + 48.),
-        viewport.height - px(60. + 46. + 128. + 4. + 48.),
+        viewport.height - px(60. + 46. + 128. + 4. + 48. + 26.),
     )
 }
 

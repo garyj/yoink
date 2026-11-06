@@ -1,0 +1,140 @@
+//! Text shown in the list and the preview.
+
+use std::ops::Range;
+
+pub const TITLE_CHARS: usize = 200;
+pub const PREVIEW_CHARS: usize = 20_000;
+
+/// The text on one line: runs of whitespace, including newlines, collapse
+/// to one space.
+pub fn title(text: &str) -> String {
+    let mut title = String::new();
+    for word in text.split_whitespace() {
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        title.push_str(word);
+        if title.len() > TITLE_CHARS * 4 {
+            break;
+        }
+    }
+    if title.chars().count() > TITLE_CHARS {
+        title = title.chars().take(TITLE_CHARS).collect::<String>() + "…";
+    }
+    title
+}
+
+/// Byte ranges in `text` that match `query` under the store's folding, so a
+/// highlight lands where the search matched.
+pub fn match_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
+    let needle = yoink_core::fold(query);
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut folded = String::new();
+    // For each byte of `folded`, the source byte range it came from.
+    let mut origin = Vec::new();
+    for (start, ch) in text.char_indices() {
+        let piece = yoink_core::fold(ch.encode_utf8(&mut [0; 4]));
+        let range = start..start + ch.len_utf8();
+        origin.extend(std::iter::repeat_n(range, piece.len()));
+        folded.push_str(&piece);
+    }
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    let mut from = 0;
+    while let Some(found) = folded[from..].find(&needle) {
+        let begin = from + found;
+        let end = begin + needle.len();
+        let range = origin[begin].start..origin[end - 1].end;
+        match ranges.last_mut() {
+            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+            _ => ranges.push(range),
+        }
+        from = end;
+    }
+    ranges
+}
+
+pub fn ago_short(now_ms: i64, then_ms: i64) -> String {
+    let minutes = (now_ms - then_ms).max(0) / 60_000;
+    match minutes {
+        0 => "now".into(),
+        1..60 => format!("{minutes}m"),
+        60..1440 => format!("{}h", minutes / 60),
+        1440..10080 => format!("{}d", minutes / 1440),
+        10080..43200 => format!("{}w", minutes / 10080),
+        43200..525600 => format!("{}mo", minutes / 43200),
+        _ => format!("{}y", minutes / 525600),
+    }
+}
+
+pub fn ago_long(now_ms: i64, then_ms: i64) -> String {
+    let minutes = (now_ms - then_ms).max(0) / 60_000;
+    let (count, unit) = match minutes {
+        0 => return "just now".into(),
+        1..60 => (minutes, "minute"),
+        60..1440 => (minutes / 60, "hour"),
+        1440..10080 => (minutes / 1440, "day"),
+        10080..43200 => (minutes / 10080, "week"),
+        43200..525600 => (minutes / 43200, "month"),
+        _ => (minutes / 525600, "year"),
+    };
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {unit}{plural} ago")
+}
+
+/// `#rgb` or `#rrggbb`, as 0xRRGGBB.
+pub fn hex_color(text: &str) -> Option<u32> {
+    let hex = text.trim().strip_prefix('#')?;
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match hex.len() {
+        6 => u32::from_str_radix(hex, 16).ok(),
+        3 => {
+            let v = u32::from_str_radix(hex, 16).ok()?;
+            let (r, g, b) = ((v >> 8) & 0xf, (v >> 4) & 0xf, v & 0xf);
+            Some((r * 17) << 16 | (g * 17) << 8 | (b * 17))
+        }
+        _ => None,
+    }
+}
+
+pub fn is_link(text: &str) -> bool {
+    let text = text.trim();
+    (text.starts_with("https://") || text.starts_with("http://"))
+        && !text.chars().any(char::is_whitespace)
+}
+
+pub fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn highlights_follow_accent_and_case_folding() {
+        let text = "Café notes: CAFE au lait";
+        let ranges = match_ranges(text, "cafe");
+        let matched: Vec<&str> = ranges.iter().map(|r| &text[r.clone()]).collect();
+        assert_eq!(matched, ["Café", "CAFE"]);
+        assert!(match_ranges(text, "").is_empty());
+        assert_eq!(
+            title("{\n  \"name\":\t\"yoink\"\n}\n"),
+            r#"{ "name": "yoink" }"#
+        );
+        assert_eq!(hex_color("#f90"), Some(0xff9900));
+        assert_eq!(hex_color("#ff9900"), Some(0xff9900));
+        assert_eq!(hex_color("ff9900"), None);
+    }
+}

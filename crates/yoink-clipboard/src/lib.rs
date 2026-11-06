@@ -1,15 +1,16 @@
+//! X11 clipboard watcher and the process's only `arboard::Clipboard` owner.
+
 use std::borrow::Cow;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use image::codecs::png::PngEncoder;
 use image::{ImageEncoder, RgbaImage};
-use tauri::{AppHandle, Emitter};
 use x11rb::connection::Connection;
+use x11rb::protocol::Event;
 use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
 use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, WindowClass};
-use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use yoink_core::HistoryStore;
 
@@ -19,7 +20,7 @@ const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: usize = 8192;
 const MAX_IMAGE_PNG_BYTES: usize = 10 * 1024 * 1024;
 
-pub(crate) enum Content {
+pub enum Content {
     Text(String),
     Image {
         rgba: Vec<u8>,
@@ -28,12 +29,12 @@ pub(crate) enum Content {
     },
 }
 
-pub(crate) struct Write {
+pub struct Write {
     pub content: Content,
     pub reply: mpsc::Sender<Result<(), String>>,
 }
 
-pub(crate) fn decode_image(png: Vec<u8>) -> Result<Content, String> {
+pub fn decode_image(png: Vec<u8>) -> Result<Content, String> {
     let mut reader =
         image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
     let mut limits = image::Limits::default();
@@ -73,10 +74,16 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     Ok(png)
 }
 
+/// Starts the watcher thread. `on_change` runs on that thread after each
+/// capture that changes the history.
 // Keep the only arboard owner alive so X11 can serve later paste requests.
-pub(crate) fn spawn(app: AppHandle, store: Arc<Mutex<HistoryStore>>, rx: mpsc::Receiver<Write>) {
+pub fn spawn(
+    store: Arc<Mutex<HistoryStore>>,
+    rx: mpsc::Receiver<Write>,
+    on_change: impl Fn() + Send + 'static,
+) {
     std::thread::spawn(move || {
-        let result = run(&app, &store, rx);
+        let result = run(&on_change, &store, rx);
         if let Err(error) = result {
             eprintln!("yoink: clipboard monitoring stopped: {error}");
         }
@@ -84,7 +91,7 @@ pub(crate) fn spawn(app: AppHandle, store: Arc<Mutex<HistoryStore>>, rx: mpsc::R
 }
 
 fn run(
-    app: &AppHandle,
+    on_change: &dyn Fn(),
     store: &Mutex<HistoryStore>,
     rx: mpsc::Receiver<Write>,
 ) -> Result<(), String> {
@@ -129,7 +136,7 @@ fn run(
                 processed = Some(revision);
                 failed_revision = None;
                 if changed {
-                    let _ = app.emit("history-changed", ());
+                    on_change();
                 }
             }
             Err(error) => {
@@ -164,7 +171,7 @@ fn capture(
         return store
             .lock()
             .unwrap()
-            .record_text(&text, crate::now_ms())
+            .record_text(&text, now_ms())
             .map(|item| item.is_some())
             .map_err(|e| e.to_string());
     }
@@ -195,9 +202,16 @@ fn capture(
     store
         .lock()
         .unwrap()
-        .record_image(&png, &thumb, width, height, crate::now_ms())
+        .record_image(&png, &thumb, width, height, now_ms())
         .map(|item| item.is_some())
         .map_err(|e| e.to_string())
+}
+
+pub fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 type XResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -251,10 +265,10 @@ impl Watcher {
     }
 
     fn observe(&mut self, event: &Event) {
-        if let Event::XfixesSelectionNotify(event) = event {
-            if event.selection == self.clipboard {
-                self.serial = self.serial.wrapping_add(1);
-            }
+        if let Event::XfixesSelectionNotify(event) = event
+            && event.selection == self.clipboard
+        {
+            self.serial = self.serial.wrapping_add(1);
         }
     }
 
@@ -407,18 +421,23 @@ mod tests {
     #[test]
     #[ignore = "requires an isolated X11 display and xclip"]
     fn x11_external_image_capture() {
-        assert!(std::process::Command::new("xclip")
-            .args([
-                "-selection",
-                "clipboard",
-                "-target",
-                "image/png",
-                "-i",
-                concat!(env!("CARGO_MANIFEST_DIR"), "/icons/128x128.png"),
-            ])
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            std::process::Command::new("xclip")
+                .args([
+                    "-selection",
+                    "clipboard",
+                    "-target",
+                    "image/png",
+                    "-i",
+                    concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/../../src-tauri/icons/128x128.png"
+                    ),
+                ])
+                .status()
+                .unwrap()
+                .success()
+        );
         let mut clipboard = arboard::Clipboard::new().unwrap();
         let mut watcher = Watcher::new().unwrap();
         let store = Mutex::new(HistoryStore::open_in_memory().unwrap());

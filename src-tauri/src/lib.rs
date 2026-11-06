@@ -1,12 +1,10 @@
-mod clipboard;
-
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
+use yoink_clipboard as clipboard;
 use yoink_core::{Config, HistoryStore, ItemKind};
 
 const PAGE_SIZE: usize = 50;
@@ -133,13 +131,6 @@ fn delete_item(id: i64, state: tauri::State<AppState>) -> Result<bool, String> {
 fn clear_history(state: tauri::State<AppState>) -> Result<(), String> {
     let mut store = state.store.lock().unwrap();
     store.clear().map_err(|e| e.to_string())
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 /// Hide only when the window is visible and focused. A buried or minimized
@@ -307,7 +298,10 @@ pub fn run(quit: bool) {
             let store = Arc::new(Mutex::new(store));
 
             let (clipboard_tx, clipboard_rx) = mpsc::channel();
-            clipboard::spawn(app.handle().clone(), store.clone(), clipboard_rx);
+            let handle = app.handle().clone();
+            clipboard::spawn(store.clone(), clipboard_rx, move || {
+                let _ = handle.emit("history-changed", ());
+            });
             app.manage(AppState {
                 store,
                 clipboard_tx,

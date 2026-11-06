@@ -5177,7 +5177,6 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 name = "yoink"
 version = "0.1.0"
 dependencies = [
- "arboard",
  "base64 0.23.1",
  "image",
  "ksni",
@@ -5187,6 +5186,17 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
+ "x11rb",
+ "yoink-clipboard",
+ "yoink-core",
+]
+
+[[package]]
+name = "yoink-clipboard"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "image",
  "x11rb",
  "yoink-core",
 ]

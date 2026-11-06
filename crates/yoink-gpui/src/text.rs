@@ -135,23 +135,24 @@ pub fn hex_color(text: &str) -> Option<u32> {
     }
 }
 
-/// A link without its scheme, shortened in the middle so the end of the path
-/// stays visible.
+/// A link as its host and last path segment, such as
+/// "github.com/…/state.rs", so links stay distinct in a narrow list.
 pub fn link_title(link: &str) -> String {
-    const KEEP: usize = 26;
     let link = link.trim();
     let bare = link
         .strip_prefix("https://")
         .or_else(|| link.strip_prefix("http://"))
         .unwrap_or(link);
     let bare = bare.strip_prefix("www.").unwrap_or(bare);
-    let chars: Vec<char> = bare.chars().collect();
-    if chars.len() <= KEEP * 2 + 1 {
-        return bare.to_string();
+    let bare = bare.split(['?', '#']).next().unwrap_or(bare);
+    let mut parts = bare.split('/').filter(|part| !part.is_empty());
+    let host = parts.next().unwrap_or(bare);
+    let segments: Vec<&str> = parts.collect();
+    match segments.as_slice() {
+        [] => host.to_string(),
+        [only] => format!("{host}/{only}"),
+        [.., last] => format!("{host}/…/{last}"),
     }
-    let head: String = chars[..KEEP].iter().collect();
-    let tail: String = chars[chars.len() - KEEP..].iter().collect();
-    format!("{head}…{tail}")
 }
 
 pub fn is_link(text: &str) -> bool {
@@ -190,5 +191,9 @@ mod tests {
         assert_eq!(hex_color("#f90"), Some(0xff9900));
         assert_eq!(hex_color("#ff9900"), Some(0xff9900));
         assert_eq!(hex_color("ff9900"), None);
+        assert_eq!(
+            link_title("https://github.com/longbridge/gpui-kit/blob/main/state.rs?plain=1"),
+            "github.com/…/state.rs"
+        );
     }
 }

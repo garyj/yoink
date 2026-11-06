@@ -98,6 +98,8 @@ pub struct Yoink {
     search: Entity<InputState>,
     rows: Vec<Row>,
     total: usize,
+    /// Every stored item, whatever the query.
+    stored: usize,
     selected: usize,
     list_scroll: UniformListScrollHandle,
     preview: Preview,
@@ -139,6 +141,7 @@ impl Yoink {
             search,
             rows: Vec::new(),
             total: 0,
+            stored: 0,
             selected: 0,
             list_scroll: UniformListScrollHandle::new(),
             preview: Preview::Empty,
@@ -226,6 +229,7 @@ impl Yoink {
         let result = (|| {
             let store = self.store.lock().unwrap();
             let total = store.count_matches(&query)?;
+            let stored = store.len()?;
             let items = store.preview_page(&query, store.max_items(), 0)?;
             let rows = items
                 .into_iter()
@@ -271,11 +275,12 @@ impl Yoink {
                     })
                 })
                 .collect::<yoink_core::Result<Vec<_>>>()?;
-            yoink_core::Result::Ok((total, rows))
+            yoink_core::Result::Ok((total, stored, rows))
         })();
         match result {
-            Ok((total, rows)) => {
+            Ok((total, stored, rows)) => {
                 self.total = total;
+                self.stored = stored;
                 self.rows = rows;
             }
             Err(error) => self.error = Some(format!("Cannot load history: {error}").into()),
@@ -386,9 +391,8 @@ impl Yoink {
     }
 
     fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        if self.confirming_clear {
-            self.clear_history(cx);
-        } else {
+        // Deleting everything needs a click, so a habitual Enter cannot do it.
+        if !self.confirming_clear {
             self.copy_selected(cx);
         }
     }
@@ -612,9 +616,9 @@ impl Yoink {
             )
         } else {
             format!(
-                "{} {}",
+                "{} of {}",
                 text::thousands(self.total),
-                plural(self.total, "match", "matches")
+                text::thousands(self.stored)
             )
         };
         div()
@@ -673,7 +677,7 @@ impl Yoink {
             )
             .child(edge_fade(palette.background, true))
             .child(edge_fade(palette.background, false))
-            .child(Scrollbar::vertical(&self.list_scroll))
+            .child(Scrollbar::vertical(&self.list_scroll).mode(ScrollbarMode::Always))
     }
 
     fn render_row(
@@ -925,7 +929,11 @@ impl Yoink {
                         .id("preview")
                         .size_full()
                         .track_scroll(&self.preview_scroll)
-                        .when(monospace, |body| body.overflow_scroll())
+                        .when(monospace, |body| {
+                            // A column flexbox keeps the code at its natural width,
+                            // so long lines widen the scroll area instead of clipping.
+                            body.overflow_scroll().flex().flex_col().items_start()
+                        })
                         .when(!monospace, |body| body.overflow_y_scroll())
                         .px_6()
                         .py_6()
@@ -933,7 +941,8 @@ impl Yoink {
                             div()
                                 .when(!monospace, |text| text.w_full())
                                 .when(monospace, |text| {
-                                    text.whitespace_nowrap()
+                                    text.flex_none()
+                                        .whitespace_nowrap()
                                         .pr_6()
                                         .font_family(mono.clone())
                                         .text_size(px(13.))
@@ -990,12 +999,20 @@ impl Yoink {
             .partition(|(label, _)| label.ends_with("copied"));
         let information = div()
             .flex_none()
-            .h(px(116.))
+            .h(px(136.))
             .px_6()
             .pt_2p5()
             .pb_2()
             .border_t_1()
             .border_color(palette.border)
+            .child(
+                div()
+                    .pb_1()
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(palette.faint)
+                    .child("Information"),
+            )
             .children(counts.chunks(2).map(|pair| {
                 div()
                     .flex()
@@ -1094,8 +1111,8 @@ impl Yoink {
                 .gap_1p5()
                 .children(keys.iter().map(|key| {
                     div()
-                        .min_w(px(22.))
-                        .h(px(22.))
+                        .min_w(px(24.))
+                        .h(px(24.))
                         .px_1p5()
                         .flex()
                         .items_center()
@@ -1154,14 +1171,6 @@ impl Yoink {
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(white())
                         .child(format!("Delete {count}"))
-                        .child(
-                            div()
-                                .px_1()
-                                .rounded(px(4.))
-                                .bg(white().opacity(0.2))
-                                .text_size(px(11.))
-                                .child("Enter"),
-                        )
                         .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
                 );
         }
@@ -1171,9 +1180,9 @@ impl Yoink {
         footer
             .when(has_rows, |footer| {
                 footer
-                    .child(hint(&["Enter"], "Copy", true))
+                    .child(hint(&["Enter"], "Copy and close", true))
                     .child(hint(&["↑", "↓"], "Navigate", false))
-                    .child(hint(&["⇧ Del"], "Delete", false))
+                    .child(hint(&["Shift", "Del"], "Delete", false))
             })
             .child(hint(
                 &["Esc"],

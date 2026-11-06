@@ -1,7 +1,7 @@
 //! The window: a search field, the history list, and a preview of the
 //! selected item.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -72,7 +72,6 @@ enum Kind {
     Color(u32),
     Image {
         thumb: Arc<Image>,
-        badge: Arc<Image>,
         width: u32,
         height: u32,
     },
@@ -117,6 +116,12 @@ pub struct Yoink {
     list_scroll: UniformListScrollHandle,
     preview: Preview,
     preview_scroll: ScrollHandle,
+    /// Kept across searches, so clearing a search reuses decoded images.
+    /// Reusing an `Arc<Image>` also keeps GPUI's decoded copy.
+    thumbs: HashMap<i64, Arc<Image>>,
+    /// Square list badges, cropped on a background thread.
+    badges: HashMap<i64, Arc<Image>>,
+    badges_pending: HashSet<i64>,
     shown: bool,
     confirming_clear: bool,
     error: Option<SharedString>,
@@ -160,6 +165,9 @@ impl Yoink {
             list_scroll: UniformListScrollHandle::new(),
             preview: Preview::Empty,
             preview_scroll: ScrollHandle::new(),
+            thumbs: HashMap::new(),
+            badges: HashMap::new(),
+            badges_pending: HashSet::new(),
             shown,
             confirming_clear: false,
             error: None,
@@ -231,15 +239,7 @@ impl Yoink {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let query = self.search.read(cx).value().to_string();
-        // Reusing an Arc<Image> keeps GPUI's decoded copy and skips rehashing.
-        let images: HashMap<i64, (Arc<Image>, Arc<Image>)> = self
-            .rows
-            .iter()
-            .filter_map(|row| match &row.kind {
-                Kind::Image { thumb, badge, .. } => Some((row.id, (thumb.clone(), badge.clone()))),
-                _ => None,
-            })
-            .collect();
+        let thumbs = &mut self.thumbs;
         let result = (|| {
             let store = self.store.lock().unwrap();
             let total = store.count_matches(&query)?;
@@ -250,20 +250,17 @@ impl Yoink {
                 .map(|item| {
                     let kind = match item.kind {
                         ItemKind::Image => {
-                            let (thumb, badge) = match images.get(&item.id) {
-                                Some(images) => images.clone(),
+                            let thumb = match thumbs.get(&item.id) {
+                                Some(thumb) => thumb.clone(),
                                 None => {
                                     let png = store.thumbnail(item.id)?.unwrap_or_default();
-                                    let badge = square_badge(&png).unwrap_or_else(|| png.clone());
-                                    (
-                                        Arc::new(Image::from_bytes(ImageFormat::Png, png)),
-                                        Arc::new(Image::from_bytes(ImageFormat::Png, badge)),
-                                    )
+                                    let thumb = Arc::new(Image::from_bytes(ImageFormat::Png, png));
+                                    thumbs.insert(item.id, thumb.clone());
+                                    thumb
                                 }
                             };
                             Kind::Image {
                                 thumb,
-                                badge,
                                 width: item.width.unwrap_or(0),
                                 height: item.height.unwrap_or(0),
                             }
@@ -296,10 +293,58 @@ impl Yoink {
             Ok((total, rows)) => {
                 self.total = total;
                 self.rows = rows;
+                if query.is_empty() {
+                    // The full list: drop images of deleted items.
+                    let ids: HashSet<i64> = self.rows.iter().map(|row| row.id).collect();
+                    self.thumbs.retain(|id, _| ids.contains(id));
+                    self.badges.retain(|id, _| ids.contains(id));
+                }
+                self.crop_badges(cx);
             }
             Err(error) => self.error = Some(format!("Cannot load history: {error}").into()),
         }
         cx.notify();
+    }
+
+    /// Crops list badges for new images off the UI thread. A row shows its
+    /// thumbnail until its badge is ready.
+    fn crop_badges(&mut self, cx: &mut Context<Self>) {
+        let missing: Vec<(i64, Arc<Image>)> = self
+            .thumbs
+            .iter()
+            .filter(|(id, _)| !self.badges.contains_key(id) && !self.badges_pending.contains(id))
+            .map(|(id, thumb)| (*id, thumb.clone()))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        self.badges_pending
+            .extend(missing.iter().map(|(id, _)| *id));
+        cx.spawn(async move |this, cx| {
+            let badges = cx
+                .background_spawn(async move {
+                    missing
+                        .into_iter()
+                        .map(|(id, thumb)| {
+                            let png =
+                                square_badge(&thumb.bytes).unwrap_or_else(|| thumb.bytes.clone());
+                            (id, Arc::new(Image::from_bytes(ImageFormat::Png, png)))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                for (id, badge) in badges {
+                    this.badges_pending.remove(&id);
+                    if this.thumbs.contains_key(&id) {
+                        this.badges.insert(id, badge);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -831,10 +876,10 @@ impl Yoink {
                 .border_color(palette.edge)
                 .bg(rgb(*rgb_value))
                 .into_any_element(),
-            Kind::Image { badge, .. } => frame()
+            Kind::Image { thumb, .. } => frame()
                 .border_1()
                 .border_color(palette.border)
-                .child(img(badge.clone()).size_full())
+                .child(img(self.badges.get(&row.id).unwrap_or(thumb).clone()).size_full())
                 .into_any_element(),
         }
     }

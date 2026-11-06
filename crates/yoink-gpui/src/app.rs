@@ -36,7 +36,7 @@ gpui_kit::actions!(
 const CONTEXT: &str = "Yoink";
 const ROW_HEIGHT: f32 = 46.;
 const PAGE_ROWS: usize = 8;
-const INFO_HEIGHT: f32 = 140.;
+const INFO_HEIGHT: f32 = 128.;
 const LIST_WIDTH: f32 = 400.;
 
 pub fn window_size() -> Size<Pixels> {
@@ -811,7 +811,11 @@ impl Yoink {
         let icon = |name: Icons| {
             frame()
                 .bg(palette.chip)
-                .child(Icon::new(name).size(px(14.)).text_color(palette.muted))
+                .child(
+                    Icon::new(name)
+                        .size(px(14.))
+                        .text_color(palette.text.opacity(0.78)),
+                )
                 .into_any_element()
         };
         match &row.kind {
@@ -896,7 +900,6 @@ impl Yoink {
                     format!("{width} × {height} pixels")
                 };
                 let caption: SharedString = size.into();
-                facts.push(("Size", caption.clone()));
                 let image = image.clone().unwrap_or_else(|| thumb.clone());
                 let fitted = fit_image(*width, *height, preview_area(window));
                 div()
@@ -1104,7 +1107,8 @@ impl Yoink {
             (
                 Icons::SearchX,
                 format!("No matches for \u{201c}{query}\u{201d}").into(),
-                "Search covers text items. Clear the search to see everything.".into(),
+                "Search covers text, links, and colors. Images show when the search is empty."
+                    .into(),
             )
         };
         div()
@@ -1235,7 +1239,7 @@ impl Yoink {
         footer
             .when(has_rows, |footer| {
                 footer
-                    .child(hint(&["Enter"], "Copy and close", true))
+                    .child(hint(&["Enter"], "Copy and hide", true))
                     .child(hint(&["↑", "↓"], "Navigate", false))
                     .child(hint(&["Shift", "Del"], "Remove", false))
             })

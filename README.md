@@ -154,8 +154,10 @@ at login with `yoink-gpui --hidden`.
 | Type | Filters text, ignoring case and accents |
 | Up, Down, Page Up, Page Down | Moves the selection |
 | Enter, or a double-click | Copies the selected item and hides the window |
-| Shift+Delete | Removes the selected item |
-| Escape | Cancels a pending clear, then clears the search, then hides the window |
+| Shift+Delete | Deletes the selected item |
+| Ctrl+Shift+Delete, or Delete all | Asks to delete all history |
+| Shift+Enter, or the red button | Confirms deleting all history. Enter alone never does |
+| Escape | Cancels a pending delete, then clears the search, then hides the window |
 
 `yoink-gpui --quit` stops the running instance.
 

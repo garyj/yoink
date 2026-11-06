@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::scroll::Scrollbar;
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme};
 use gpui_kit::{prelude::*, *};
 use yoink_clipboard as clipboard;
@@ -37,6 +37,8 @@ const CONTEXT: &str = "Yoink";
 const ROW_HEIGHT: f32 = 46.;
 const PAGE_ROWS: usize = 8;
 const INFO_HEIGHT: f32 = 128.;
+/// Single-line text up to this length is shown large and centered.
+const SHORT_TEXT_CHARS: usize = 160;
 const LIST_WIDTH: f32 = 400.;
 
 pub fn window_size() -> Size<Pixels> {
@@ -550,7 +552,7 @@ impl Palette {
                 border: hsla(0., 0., 0., 0.11),
                 text: rgb(0x1c1d22).into(),
                 muted: rgb(0x5f6470).into(),
-                faint: rgb(0x5c616b).into(),
+                faint: rgb(0x55595f).into(),
                 accent: rgb(0xf08a00).into(),
                 selected: hsla(0., 0., 0., 0.07),
                 edge: hsla(0., 0., 0., 0.12),
@@ -674,6 +676,8 @@ impl Yoink {
             .child(
                 div()
                     .flex_none()
+                    .w(px(84.))
+                    .text_right()
                     .text_size(px(12.5))
                     .text_color(palette.faint)
                     .child(count),
@@ -869,8 +873,8 @@ impl Yoink {
                     .gap_4()
                     .child(
                         div()
-                            .size(px(112.))
-                            .rounded(px(16.))
+                            .size(px(144.))
+                            .rounded(px(18.))
                             .border_1()
                             .border_color(palette.edge)
                             .shadow_lg()
@@ -900,6 +904,7 @@ impl Yoink {
                     format!("{width} × {height} pixels")
                 };
                 let caption: SharedString = size.into();
+                facts.push(("Format", "PNG".into()));
                 let image = image.clone().unwrap_or_else(|| thumb.clone());
                 let fitted = fit_image(*width, *height, preview_area(window));
                 div()
@@ -959,6 +964,7 @@ impl Yoink {
                     .into(),
                 ));
                 let monospace = *lines > 1;
+                let short = !monospace && *chars <= SHORT_TEXT_CHARS;
                 let styled = StyledText::new(body.clone()).with_highlights(
                     highlights.iter().cloned().map(|range| {
                         (
@@ -979,10 +985,13 @@ impl Yoink {
                             // so long lines widen the scroll area instead of clipping.
                             body.overflow_scroll().flex().flex_col().items_start()
                         })
-                        .when(!monospace, |body| body.size_full().overflow_y_scroll())
-                        .when(monospace, |body| body.min_h_0())
-                        .px_6()
-                        .py_6()
+                        .when(!monospace, |body| {
+                            body.size_full().overflow_y_scroll().px_6().py_6()
+                        })
+                        .when(short, |body| {
+                            body.flex().flex_col().justify_center().items_center()
+                        })
+                        .when(monospace, |body| body.min_h_0().px_4().py_3p5())
                         .child(
                             div()
                                 .when(!monospace, |text| text.w_full())
@@ -994,8 +1003,11 @@ impl Yoink {
                                         .text_size(px(13.))
                                         .line_height(px(21.))
                                 })
-                                .when(!monospace, |text| {
+                                .when(!monospace && !short, |text| {
                                     text.text_size(px(18.)).line_height(px(28.))
+                                })
+                                .when(short, |text| {
+                                    text.text_size(px(20.)).line_height(px(30.)).text_center()
                                 })
                                 .when(link, |text| text.text_color(palette.accent))
                                 .child(styled),
@@ -1010,24 +1022,38 @@ impl Yoink {
                             ))
                         });
                 if monospace {
-                    // The box hugs the code, so its scrollbars sit right under it.
+                    let well = palette.background;
+                    // The well hugs the code, so its scrollbars sit right under it.
                     div()
-                        .relative()
-                        .w_full()
-                        .max_h_full()
-                        .flex()
-                        .flex_col()
-                        .child(scroll_area)
-                        // Over empty space the fade is invisible, so it needs no
-                        // overflow check.
-                        .child(div().absolute().top_0().bottom_0().right_0().w(px(32.)).bg(
-                            linear_gradient(
-                                90.,
-                                linear_color_stop(palette.panel.opacity(0.), 0.),
-                                linear_color_stop(palette.panel, 1.),
-                            ),
-                        ))
-                        .child(Scrollbar::new(&self.preview_scroll))
+                        .size_full()
+                        .p_4()
+                        .child(
+                            div()
+                                .relative()
+                                .w_full()
+                                .max_h_full()
+                                .flex()
+                                .flex_col()
+                                .rounded(px(8.))
+                                .overflow_hidden()
+                                .bg(well)
+                                .border_1()
+                                .border_color(palette.border)
+                                .child(scroll_area)
+                                // Over empty space the fade is invisible, so it needs
+                                // no overflow check.
+                                .child(div().absolute().top_0().bottom_0().right_0().w(px(48.)).bg(
+                                    linear_gradient(
+                                        90.,
+                                        linear_color_stop(well.opacity(0.), 0.),
+                                        linear_color_stop(well, 1.),
+                                    ),
+                                ))
+                                .child(
+                                    Scrollbar::new(&self.preview_scroll)
+                                        .mode(ScrollbarMode::Always),
+                                ),
+                        )
                         .into_any_element()
                 } else {
                     scroll_area.into_any_element()
@@ -1107,8 +1133,7 @@ impl Yoink {
             (
                 Icons::SearchX,
                 format!("No matches for \u{201c}{query}\u{201d}").into(),
-                "Search covers text, links, and colors. Images show when the search is empty."
-                    .into(),
+                "Search looks through text, links, and colors. Images are not searchable.".into(),
             )
         };
         div()
@@ -1169,7 +1194,9 @@ impl Yoink {
                         .text_color(color)
                         .child(*key)
                 }))
-                .child(div().text_size(px(13.)).text_color(color).child(label))
+                .when(!label.is_empty(), |hint| {
+                    hint.child(div().text_size(px(13.)).text_color(color).child(label))
+                })
         };
         let footer = div()
             .h(px(46.))
@@ -1191,18 +1218,14 @@ impl Yoink {
             );
             let dark = cx.theme().mode.is_dark();
             return footer
-                .bg(if dark {
-                    danger.opacity(0.2)
-                } else {
-                    rgb(0xfde8e8).into()
-                })
-                .border_color(danger.opacity(if dark { 0.5 } else { 0.35 }))
+                .bg(if dark { rgb(0x3f1214) } else { rgb(0xffe4e6) })
+                .border_color(if dark { rgb(0x7f1d1d) } else { rgb(0xfecdd3) })
                 .child(
                     div()
                         .flex_1()
                         .text_size(px(14.))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(if dark { rgb(0xffd7d4) } else { rgb(0x9f1239) })
+                        .text_color(if dark { rgb(0xfecdd3) } else { rgb(0x9f1239) })
                         .child(format!("Delete all {count}? This cannot be undone.")),
                 )
                 .child(hint(&["Esc"], "Cancel", false))
@@ -1222,14 +1245,14 @@ impl Yoink {
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(white())
                         .child(format!("Delete {count}"))
-                        .child(
+                        .children(["Shift", "Enter"].map(|key| {
                             div()
                                 .px_1p5()
                                 .rounded(px(4.))
                                 .bg(white().opacity(0.2))
                                 .text_size(px(11.5))
-                                .child("Shift Enter"),
-                        )
+                                .child(key)
+                        }))
                         .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
                 );
         }
@@ -1241,7 +1264,7 @@ impl Yoink {
                 footer
                     .child(hint(&["Enter"], "Copy and hide", true))
                     .child(hint(&["↑", "↓"], "Navigate", false))
-                    .child(hint(&["Shift", "Del"], "Remove", false))
+                    .child(hint(&["Shift", "Del"], "Delete", false))
             })
             .child(hint(
                 &["Esc"],
@@ -1250,26 +1273,28 @@ impl Yoink {
             ))
             .child(div().flex_1())
             .when(self.total > 0 && !searching, |footer| {
-                footer.child(
-                    div()
-                        .id("clear")
-                        .h(px(32.))
-                        .px_3()
-                        .flex()
-                        .items_center()
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .gap_1p5()
-                        .text_size(px(13.))
-                        .text_color(palette.text.opacity(0.75))
-                        .hover(move |style| style.text_color(danger).bg(hover))
-                        .child(Icon::new(Icons::Trash).size(px(14.)))
-                        .child("Clear history")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.confirming_clear = true;
-                            cx.notify();
-                        })),
-                )
+                footer
+                    .child(hint(&["Ctrl", "Shift", "Del"], "", false))
+                    .child(
+                        div()
+                            .id("clear")
+                            .h(px(32.))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .gap_1p5()
+                            .text_size(px(13.))
+                            .text_color(palette.text.opacity(0.75))
+                            .hover(move |style| style.text_color(danger).bg(hover))
+                            .child(Icon::new(Icons::Trash).size(px(15.)))
+                            .child("Delete all")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirming_clear = true;
+                                cx.notify();
+                            })),
+                    )
             })
     }
 }

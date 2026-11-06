@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::component::scroll::Scrollbar;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme};
 use gpui_kit::{prelude::*, *};
 use yoink_clipboard as clipboard;
@@ -21,13 +21,22 @@ use gpui_kit::assets::IconName as Icons;
 gpui_kit::actions!(
     yoink,
     [
-        SelectPrev, SelectNext, PagePrev, PageNext, Confirm, Dismiss, DeleteItem
+        SelectPrev,
+        SelectNext,
+        PagePrev,
+        PageNext,
+        Confirm,
+        Dismiss,
+        DeleteItem,
+        StartClear,
+        ConfirmClear
     ]
 );
 
 const CONTEXT: &str = "Yoink";
 const ROW_HEIGHT: f32 = 46.;
 const PAGE_ROWS: usize = 8;
+const INFO_HEIGHT: f32 = 140.;
 const LIST_WIDTH: f32 = 400.;
 
 pub fn window_size() -> Size<Pixels> {
@@ -44,6 +53,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
         // Same depth as the input's own bindings and registered later, so it wins.
         KeyBinding::new("shift-delete", DeleteItem, Some("Yoink > Input")),
+        KeyBinding::new("ctrl-shift-delete", StartClear, Some("Yoink > Input")),
+        KeyBinding::new("shift-enter", ConfirmClear, Some("Yoink > Input")),
     ]);
 }
 
@@ -120,10 +131,11 @@ impl Yoink {
         cx: &mut Context<Self>,
     ) -> Self {
         let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search clipboard history"));
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search text, links, and colors"));
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, _, event: &InputEvent, _, cx| {
                 if let InputEvent::Change = event {
+                    this.confirming_clear = false;
                     this.preview = Preview::Empty;
                     this.reload(cx);
                     this.select(0, cx);
@@ -391,7 +403,8 @@ impl Yoink {
     }
 
     fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        // Deleting everything needs a click, so a habitual Enter cannot do it.
+        // Deleting everything needs Shift+Enter or a click, so a habitual Enter
+        // cannot do it.
         if !self.confirming_clear {
             self.copy_selected(cx);
         }
@@ -432,6 +445,19 @@ impl Yoink {
         }
         self.reload(cx);
         self.select(self.selected, cx);
+    }
+
+    fn start_clear(&mut self, _: &StartClear, _: &mut Window, cx: &mut Context<Self>) {
+        if self.total > 0 && self.search.read(cx).value().is_empty() {
+            self.confirming_clear = true;
+            cx.notify();
+        }
+    }
+
+    fn confirm_clear(&mut self, _: &ConfirmClear, _: &mut Window, cx: &mut Context<Self>) {
+        if self.confirming_clear {
+            self.clear_history(cx);
+        }
     }
 
     fn clear_history(&mut self, cx: &mut Context<Self>) {
@@ -507,10 +533,10 @@ impl Palette {
                 panel: rgb(0x1d1e24).into(),
                 border: hsla(0., 0., 1., 0.11),
                 text: rgb(0xeceef2).into(),
-                muted: rgb(0xa0a4ae).into(),
+                muted: rgb(0xb4b8c2).into(),
                 faint: rgb(0xb0b5bf).into(),
                 accent,
-                selected: hsla(0., 0., 1., 0.075),
+                selected: hsla(0., 0., 1., 0.1),
                 edge: hsla(0., 0., 1., 0.14),
                 hover: hsla(0., 0., 1., 0.04),
                 chip: hsla(0., 0., 1., 0.06),
@@ -519,14 +545,14 @@ impl Palette {
             }
         } else {
             Self {
-                background: rgb(0xfbfbfc).into(),
+                background: rgb(0xf4f4f5).into(),
                 panel: rgb(0xffffff).into(),
-                border: hsla(0., 0., 0., 0.08),
+                border: hsla(0., 0., 0., 0.11),
                 text: rgb(0x1c1d22).into(),
                 muted: rgb(0x5f6470).into(),
                 faint: rgb(0x5c616b).into(),
                 accent: rgb(0xf08a00).into(),
-                selected: hsla(0., 0., 0., 0.055),
+                selected: hsla(0., 0., 0., 0.07),
                 edge: hsla(0., 0., 0., 0.12),
                 hover: hsla(0., 0., 0., 0.035),
                 chip: hsla(0., 0., 0., 0.05),
@@ -567,6 +593,8 @@ impl Render for Yoink {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::delete_selected))
+            .on_action(cx.listener(Self::start_clear))
+            .on_action(cx.listener(Self::confirm_clear))
             .size_full()
             .flex()
             .flex_col()
@@ -582,7 +610,6 @@ impl Render for Yoink {
                     .flex()
                     .border_t_1()
                     .border_color(palette.border)
-                    .when(self.confirming_clear, |body| body.opacity(0.55))
                     .map(|body| {
                         if self.rows.is_empty() {
                             body.child(self.render_empty(&palette, cx))
@@ -679,7 +706,7 @@ impl Yoink {
             )
             .child(edge_fade(palette.background, true))
             .child(edge_fade(palette.background, false))
-            .child(Scrollbar::vertical(&self.list_scroll).mode(ScrollbarMode::Always))
+            .child(Scrollbar::vertical(&self.list_scroll))
     }
 
     fn render_row(
@@ -722,16 +749,16 @@ impl Yoink {
                         row.bg(palette.selected).child(
                             div()
                                 .absolute()
-                                .left_0()
-                                .top(px(10.))
-                                .bottom(px(10.))
+                                .left(px(2.))
+                                .top(px(11.))
+                                .bottom(px(11.))
                                 .w(px(3.))
-                                .rounded_r(px(2.))
+                                .rounded(px(1.5))
                                 .bg(palette.accent),
                         )
                     })
                     .when(!selected, |row| row.hover(move |style| style.bg(hover)))
-                    .child(self.render_badge(row, selected, palette))
+                    .child(self.render_badge(row, palette))
                     .child(
                         div()
                             .flex_1()
@@ -770,7 +797,7 @@ impl Yoink {
             .into_any_element()
     }
 
-    fn render_badge(&self, row: &Row, selected: bool, palette: &Palette) -> AnyElement {
+    fn render_badge(&self, row: &Row, palette: &Palette) -> AnyElement {
         let frame = || {
             div()
                 .size(px(26.))
@@ -783,16 +810,8 @@ impl Yoink {
         };
         let icon = |name: Icons| {
             frame()
-                .bg(if selected {
-                    palette.accent.opacity(0.18)
-                } else {
-                    palette.chip
-                })
-                .child(Icon::new(name).size(px(14.)).text_color(if selected {
-                    palette.accent
-                } else {
-                    palette.muted
-                }))
+                .bg(palette.chip)
+                .child(Icon::new(name).size(px(14.)).text_color(palette.muted))
                 .into_any_element()
         };
         match &row.kind {
@@ -996,7 +1015,16 @@ impl Yoink {
                         .flex()
                         .flex_col()
                         .child(scroll_area)
-                        .child(Scrollbar::new(&self.preview_scroll).mode(ScrollbarMode::Always))
+                        .when(self.preview_scroll.max_offset().x > px(0.), |code| {
+                            code.child(div().absolute().top_0().bottom_0().right_0().w(px(32.)).bg(
+                                linear_gradient(
+                                    90.,
+                                    linear_color_stop(palette.panel.opacity(0.), 0.),
+                                    linear_color_stop(palette.panel, 1.),
+                                ),
+                            ))
+                        })
+                        .child(Scrollbar::new(&self.preview_scroll))
                         .into_any_element()
                 } else {
                     scroll_area.into_any_element()
@@ -1014,25 +1042,25 @@ impl Yoink {
 
         let information = div()
             .flex_none()
-            .h(px(128.))
+            .h(px(INFO_HEIGHT))
             .px_6()
-            .pt_3()
+            .pt_4()
             .border_t_1()
             .border_color(palette.border)
             .child(
                 div()
-                    .pb_1p5()
-                    .text_size(px(11.5))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .pb_2()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::BOLD)
                     .text_color(palette.faint)
-                    .child("Information"),
+                    .child("INFORMATION"),
             )
             .children(facts.into_iter().map(|(label, value)| {
                 div()
                     .h(px(22.))
                     .flex()
                     .items_center()
-                    .text_size(px(12.5))
+                    .text_size(px(13.))
                     .child(
                         div()
                             .w(px(96.))
@@ -1070,7 +1098,7 @@ impl Yoink {
             (
                 Icons::ClipboardList,
                 "Nothing yoinked yet".into(),
-                "Copy text or an image in any app and it appears here.".into(),
+                "Copy text or an image in any app and it appears here. Your yoink shortcut opens this window.".into(),
             )
         } else {
             (
@@ -1137,7 +1165,7 @@ impl Yoink {
                         .text_color(color)
                         .child(*key)
                 }))
-                .child(div().text_size(px(12.5)).text_color(color).child(label))
+                .child(div().text_size(px(13.)).text_color(color).child(label))
         };
         let footer = div()
             .h(px(46.))
@@ -1149,7 +1177,7 @@ impl Yoink {
             .pr_3p5()
             .border_t_1()
             .border_color(palette.border);
-        let (danger, muted, hover) = (palette.danger, palette.muted, palette.hover);
+        let (danger, hover) = (palette.danger, palette.hover);
 
         if self.confirming_clear {
             let count = format!(
@@ -1159,17 +1187,18 @@ impl Yoink {
             );
             let dark = cx.theme().mode.is_dark();
             return footer
-                .bg(danger.opacity(if dark { 0.2 } else { 0.09 }))
+                .bg(if dark {
+                    danger.opacity(0.2)
+                } else {
+                    rgb(0xfde8e8).into()
+                })
+                .border_color(danger.opacity(if dark { 0.5 } else { 0.35 }))
                 .child(
                     div()
                         .flex_1()
                         .text_size(px(14.))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(if dark {
-                            rgb(0xffd7d4).into()
-                        } else {
-                            palette.text
-                        })
+                        .text_color(if dark { rgb(0xffd7d4) } else { rgb(0x9f1239) })
                         .child(format!("Delete all {count}? This cannot be undone.")),
                 )
                 .child(hint(&["Esc"], "Cancel", false))
@@ -1189,6 +1218,14 @@ impl Yoink {
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(white())
                         .child(format!("Delete {count}"))
+                        .child(
+                            div()
+                                .px_1p5()
+                                .rounded(px(4.))
+                                .bg(white().opacity(0.2))
+                                .text_size(px(11.5))
+                                .child("Shift Enter"),
+                        )
                         .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
                 );
         }
@@ -1200,7 +1237,7 @@ impl Yoink {
                 footer
                     .child(hint(&["Enter"], "Copy and close", true))
                     .child(hint(&["↑", "↓"], "Navigate", false))
-                    .child(hint(&["Shift", "Del"], "Delete", false))
+                    .child(hint(&["Shift", "Del"], "Remove", false))
             })
             .child(hint(
                 &["Esc"],
@@ -1218,9 +1255,11 @@ impl Yoink {
                         .items_center()
                         .rounded(px(6.))
                         .cursor_pointer()
-                        .text_size(px(12.5))
-                        .text_color(muted)
+                        .gap_1p5()
+                        .text_size(px(13.))
+                        .text_color(palette.text.opacity(0.75))
                         .hover(move |style| style.text_color(danger).bg(hover))
+                        .child(Icon::new(Icons::Trash).size(px(14.)))
                         .child("Clear history")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.confirming_clear = true;
@@ -1237,7 +1276,7 @@ fn preview_area(window: &Window) -> Size<Pixels> {
     let viewport = window.viewport_size();
     size(
         viewport.width - px(LIST_WIDTH + 2. + 48.),
-        viewport.height - px(60. + 46. + 128. + 4. + 48. + 26.),
+        viewport.height - px(60. + 46. + INFO_HEIGHT + 4. + 48. + 26.),
     )
 }
 
@@ -1387,5 +1426,19 @@ mod tests {
         cx.simulate_keystrokes(window, "down shift-delete");
         assert_eq!(titles(cx), ["#ff9900", "git status --short"]);
         assert_eq!(store.lock().unwrap().len().unwrap(), 2);
+
+        let confirming =
+            |cx: &mut TestAppContext| view.read_with(cx, |view, _| view.confirming_clear);
+        cx.simulate_keystrokes(window, "ctrl-shift-delete");
+        assert!(confirming(cx));
+        // A search would make the count describe only the matches.
+        cx.simulate_input(window, "git");
+        assert!(!confirming(cx), "typing cancels a pending clear");
+        cx.simulate_keystrokes(window, "escape ctrl-shift-delete enter");
+        assert!(confirming(cx), "plain Enter does not delete everything");
+        assert_eq!(store.lock().unwrap().len().unwrap(), 2);
+        cx.simulate_keystrokes(window, "shift-enter");
+        assert!(store.lock().unwrap().is_empty().unwrap());
+        assert!(titles(cx).is_empty());
     }
 }

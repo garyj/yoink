@@ -1201,7 +1201,6 @@ impl Yoink {
             // Darker than `danger` so white text on it reaches 4.5:1.
             let confirm_red: Hsla = rgb(0xc42b36).into();
             return footer
-                .h(px(56.))
                 .bg(if dark { rgb(0x3f1214) } else { rgb(0xffe4e6) })
                 .border_color(if dark { rgb(0x7f1d1d) } else { rgb(0xfecdd3) })
                 .child(
@@ -1215,7 +1214,7 @@ impl Yoink {
                 .child(
                     div()
                         .id("cancel-clear")
-                        .h(px(32.))
+                        .h(px(30.))
                         .px_3()
                         .flex()
                         .items_center()
@@ -1235,11 +1234,15 @@ impl Yoink {
                             cx.notify();
                         })),
                 )
-                .child(hint(&["Shift", "Enter"], "", false))
+                .child(div().flex().gap_1().children(["Shift", "Enter"].map(|key| {
+                    keycap(key, palette)
+                        .bg(white().opacity(if dark { 0.14 } else { 0.7 }))
+                        .text_color(if dark { rgb(0xfecdd3) } else { rgb(0x991b1b) })
+                })))
                 .child(
                     div()
                         .id("confirm-clear")
-                        .h(px(32.))
+                        .h(px(30.))
                         .px_3p5()
                         .flex()
                         .items_center()

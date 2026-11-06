@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, Theme};
 use gpui_kit::{prelude::*, *};
 use yoink_clipboard as clipboard;
@@ -37,8 +38,7 @@ const CONTEXT: &str = "Yoink";
 const ROW_HEIGHT: f32 = 46.;
 const PAGE_ROWS: usize = 8;
 const INFO_HEIGHT: f32 = 128.;
-/// Single-line text up to this length is shown large and centered.
-const SHORT_TEXT_CHARS: usize = 160;
+
 const LIST_WIDTH: f32 = 400.;
 
 pub fn window_size() -> Size<Pixels> {
@@ -538,12 +538,12 @@ impl Palette {
                 muted: rgb(0xb4b8c2).into(),
                 faint: rgb(0xb0b5bf).into(),
                 accent,
-                selected: hsla(0., 0., 1., 0.1),
+                selected: hsla(0., 0., 1., 0.13),
                 edge: hsla(0., 0., 1., 0.14),
                 hover: hsla(0., 0., 1., 0.04),
                 chip: hsla(0., 0., 1., 0.06),
                 danger: rgb(0xe5484d).into(),
-                matched: hsla(35. / 360., 1., 0.55, 0.42),
+                matched: hsla(35. / 360., 1., 0.55, 0.32),
             }
         } else {
             Self {
@@ -551,10 +551,10 @@ impl Palette {
                 panel: rgb(0xffffff).into(),
                 border: hsla(0., 0., 0., 0.11),
                 text: rgb(0x1c1d22).into(),
-                muted: rgb(0x5f6470).into(),
-                faint: rgb(0x55595f).into(),
+                muted: rgb(0x55585e).into(),
+                faint: rgb(0x6b6e73).into(),
                 accent: rgb(0xf08a00).into(),
-                selected: hsla(0., 0., 0., 0.07),
+                selected: hsla(0., 0., 0., 0.1),
                 edge: hsla(0., 0., 0., 0.12),
                 hover: hsla(0., 0., 0., 0.035),
                 chip: hsla(0., 0., 0., 0.05),
@@ -670,7 +670,7 @@ impl Yoink {
                     Input::new(&self.search)
                         .appearance(false)
                         .large()
-                        .cleanable(true),
+                        .cleanable(false),
                 ),
             )
             .child(
@@ -964,7 +964,7 @@ impl Yoink {
                     .into(),
                 ));
                 let monospace = *lines > 1;
-                let short = !monospace && *chars <= SHORT_TEXT_CHARS;
+
                 let styled = StyledText::new(body.clone()).with_highlights(
                     highlights.iter().cloned().map(|range| {
                         (
@@ -988,10 +988,7 @@ impl Yoink {
                         .when(!monospace, |body| {
                             body.size_full().overflow_y_scroll().px_6().py_6()
                         })
-                        .when(short, |body| {
-                            body.flex().flex_col().justify_center().items_center()
-                        })
-                        .when(monospace, |body| body.min_h_0().px_4().py_3p5())
+                        .when(monospace, |body| body.flex_1().min_h_0().px_4().py_3p5())
                         .child(
                             div()
                                 .when(!monospace, |text| text.w_full())
@@ -1003,11 +1000,8 @@ impl Yoink {
                                         .text_size(px(13.))
                                         .line_height(px(21.))
                                 })
-                                .when(!monospace && !short, |text| {
-                                    text.text_size(px(18.)).line_height(px(28.))
-                                })
-                                .when(short, |text| {
-                                    text.text_size(px(20.)).line_height(px(30.)).text_center()
+                                .when(!monospace, |text| {
+                                    text.text_size(px(17.)).line_height(px(27.))
                                 })
                                 .when(link, |text| text.text_color(palette.accent))
                                 .child(styled),
@@ -1023,15 +1017,14 @@ impl Yoink {
                         });
                 if monospace {
                     let well = palette.background;
-                    // The well hugs the code, so its scrollbars sit right under it.
+                    // The well fills the pane; its edge fade and scrollbar mark long lines.
                     div()
                         .size_full()
                         .p_4()
                         .child(
                             div()
                                 .relative()
-                                .w_full()
-                                .max_h_full()
+                                .size_full()
                                 .flex()
                                 .flex_col()
                                 .rounded(px(8.))
@@ -1178,22 +1171,10 @@ impl Yoink {
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .children(keys.iter().map(|key| {
-                    div()
-                        .min_w(px(24.))
-                        .h(px(24.))
-                        .px_1p5()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(5.))
-                        .bg(palette.chip)
-                        .border_1()
-                        .border_color(palette.edge)
-                        .text_size(px(12.))
-                        .text_color(color)
-                        .child(*key)
-                }))
+                .children(
+                    keys.iter()
+                        .map(|key| keycap(key, palette).text_color(color)),
+                )
                 .when(!label.is_empty(), |hint| {
                     hint.child(div().text_size(px(13.)).text_color(color).child(label))
                 })
@@ -1217,7 +1198,10 @@ impl Yoink {
                 plural(self.total, "item", "items")
             );
             let dark = cx.theme().mode.is_dark();
+            // Darker than `danger` so white text on it reaches 4.5:1.
+            let confirm_red: Hsla = rgb(0xc42b36).into();
             return footer
+                .h(px(56.))
                 .bg(if dark { rgb(0x3f1214) } else { rgb(0xffe4e6) })
                 .border_color(if dark { rgb(0x7f1d1d) } else { rgb(0xfecdd3) })
                 .child(
@@ -1225,10 +1209,33 @@ impl Yoink {
                         .flex_1()
                         .text_size(px(14.))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(if dark { rgb(0xfecdd3) } else { rgb(0x9f1239) })
+                        .text_color(if dark { rgb(0xfecdd3) } else { rgb(0x991b1b) })
                         .child(format!("Delete all {count}? This cannot be undone.")),
                 )
-                .child(hint(&["Esc"], "Cancel", false))
+                .child(
+                    div()
+                        .id("cancel-clear")
+                        .h(px(32.))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .rounded(px(7.))
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(palette.edge)
+                        .bg(palette.panel)
+                        .hover(move |style| style.bg(hover))
+                        .text_size(px(13.))
+                        .text_color(palette.text)
+                        .child(keycap("Esc", palette))
+                        .child("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirming_clear = false;
+                            cx.notify();
+                        })),
+                )
+                .child(hint(&["Shift", "Enter"], "", false))
                 .child(
                     div()
                         .id("confirm-clear")
@@ -1239,20 +1246,12 @@ impl Yoink {
                         .gap_2()
                         .rounded(px(7.))
                         .cursor_pointer()
-                        .bg(danger)
-                        .hover(move |style| style.bg(danger.opacity(0.88)))
+                        .bg(confirm_red)
+                        .hover(move |style| style.bg(confirm_red.opacity(0.88)))
                         .text_size(px(13.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(white())
                         .child(format!("Delete {count}"))
-                        .children(["Shift", "Enter"].map(|key| {
-                            div()
-                                .px_1p5()
-                                .rounded(px(4.))
-                                .bg(white().opacity(0.2))
-                                .text_size(px(11.5))
-                                .child(key)
-                        }))
                         .on_click(cx.listener(|this, _, _, cx| this.clear_history(cx))),
                 );
         }
@@ -1273,30 +1272,50 @@ impl Yoink {
             ))
             .child(div().flex_1())
             .when(self.total > 0 && !searching, |footer| {
-                footer
-                    .child(hint(&["Ctrl", "Shift", "Del"], "", false))
-                    .child(
-                        div()
-                            .id("clear")
-                            .h(px(32.))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .rounded(px(6.))
-                            .cursor_pointer()
-                            .gap_1p5()
-                            .text_size(px(13.))
-                            .text_color(palette.text.opacity(0.75))
-                            .hover(move |style| style.text_color(danger).bg(hover))
-                            .child(Icon::new(Icons::Trash).size(px(15.)))
-                            .child("Delete all")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.confirming_clear = true;
-                                cx.notify();
-                            })),
-                    )
+                footer.child(
+                    div()
+                        .id("clear")
+                        .h(px(30.))
+                        .px_2p5()
+                        .border_1()
+                        .border_color(palette.edge)
+                        .tooltip(|window, cx| {
+                            Tooltip::new("Delete all history (Ctrl+Shift+Delete)").build(window, cx)
+                        })
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .cursor_pointer()
+                        .gap_1p5()
+                        .text_size(px(13.))
+                        .text_color(palette.text.opacity(0.75))
+                        .hover(move |style| style.text_color(danger).bg(hover))
+                        .child(Icon::new(Icons::Trash).size(px(15.)))
+                        .child("Delete all")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirming_clear = true;
+                            cx.notify();
+                        })),
+                )
             })
     }
+}
+
+fn keycap(key: &'static str, palette: &Palette) -> Div {
+    div()
+        .min_w(px(24.))
+        .h(px(24.))
+        .px_1p5()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .bg(palette.chip)
+        .border_1()
+        .border_color(palette.edge)
+        .text_size(px(12.))
+        .text_color(palette.muted)
+        .child(key)
 }
 
 /// The space the image preview can fill: the pane right of the list, above

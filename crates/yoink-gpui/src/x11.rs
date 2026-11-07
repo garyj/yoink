@@ -32,11 +32,16 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const VIEWABLE_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// The `_NET_WM_DESKTOP` value of a window shown on every workspace.
+const ALL_DESKTOPS: u32 = u32::MAX;
+
 pub struct X11 {
     conn: RustConnection,
     root: Window,
     clock: Window,
     net_active_window: Atom,
+    net_current_desktop: Atom,
+    net_wm_desktop: Atom,
     net_wm_user_time: Atom,
     yoink_clock: Atom,
 }
@@ -48,6 +53,8 @@ impl X11 {
         let intern =
             |name: &[u8]| -> Result<Atom> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
         let net_active_window = intern(b"_NET_ACTIVE_WINDOW")?;
+        let net_current_desktop = intern(b"_NET_CURRENT_DESKTOP")?;
+        let net_wm_desktop = intern(b"_NET_WM_DESKTOP")?;
         let net_wm_user_time = intern(b"_NET_WM_USER_TIME")?;
         let yoink_clock = intern(b"_YOINK_CLOCK")?;
         let clock = conn.generate_id()?;
@@ -70,6 +77,8 @@ impl X11 {
             root,
             clock,
             net_active_window,
+            net_current_desktop,
+            net_wm_desktop,
             net_wm_user_time,
             yoink_clock,
         })
@@ -119,15 +128,7 @@ impl X11 {
             AtomEnum::CARDINAL,
             &[time],
         )?;
-        if let Some((x, y)) = self.centered_position(width, height) {
-            let mut hints = WmSizeHints::get_normal_hints(&self.conn, window)?
-                .reply()?
-                .unwrap_or_default();
-            hints.position = Some((WmSizeHintsSpecification::UserSpecified, x, y));
-            hints.set_normal_hints(&self.conn, window)?;
-            self.conn
-                .configure_window(window, &ConfigureWindowAux::new().x(x).y(y))?;
-        }
+        self.place(window, width, height)?;
         self.conn.map_window(window)?;
         self.conn.flush()?;
         if !self.wait_viewable(window) {
@@ -165,9 +166,52 @@ impl X11 {
         Ok(())
     }
 
-    pub fn activate_now(&self, window: Window) -> Result<()> {
+    /// Focuses an already shown window, first moving it to the current
+    /// workspace as `wmctrl -R` does.
+    pub fn summon(&self, window: Window, width: u32, height: u32) -> Result<()> {
+        if self.move_to_current_desktop(window)? {
+            self.place(window, width, height)?;
+        }
         let time = self.server_time()?;
         self.activate(window, time)
+    }
+
+    /// Cinnamon keeps a window on another workspace mapped and viewable, and
+    /// activating it switches to that workspace. Returns whether it moved.
+    fn move_to_current_desktop(&self, window: Window) -> Result<bool> {
+        let (Some(current), Some(desktop)) = (
+            self.cardinal(self.root, self.net_current_desktop)?,
+            self.cardinal(window, self.net_wm_desktop)?,
+        ) else {
+            return Ok(false);
+        };
+        if desktop == current || desktop == ALL_DESKTOPS {
+            return Ok(false);
+        }
+        let event = ClientMessageEvent::new(32, window, self.net_wm_desktop, [current, 2, 0, 0, 0]);
+        self.conn.send_event(
+            false,
+            self.root,
+            EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+            event,
+        )?;
+        self.conn.flush()?;
+        let deadline = Instant::now() + VIEWABLE_TIMEOUT;
+        while self.cardinal(window, self.net_wm_desktop)? != Some(current) {
+            if Instant::now() > deadline {
+                return Err("window did not move to the current workspace".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Ok(true)
+    }
+
+    fn cardinal(&self, window: Window, property: Atom) -> Result<Option<u32>> {
+        let reply = self
+            .conn
+            .get_property(false, window, property, AtomEnum::CARDINAL, 0, 1)?
+            .reply()?;
+        Ok(reply.value32().and_then(|mut values| values.next()))
     }
 
     /// Withdraws `window` as ICCCM 4.1.4 describes: unmap it, then send a
@@ -191,6 +235,21 @@ impl X11 {
             event,
         )?;
         self.conn.flush()?;
+        Ok(())
+    }
+
+    /// Centers `window` on the monitor under the pointer.
+    fn place(&self, window: Window, width: u32, height: u32) -> Result<()> {
+        let Some((x, y)) = self.centered_position(width, height) else {
+            return Ok(());
+        };
+        let mut hints = WmSizeHints::get_normal_hints(&self.conn, window)?
+            .reply()?
+            .unwrap_or_default();
+        hints.position = Some((WmSizeHintsSpecification::UserSpecified, x, y));
+        hints.set_normal_hints(&self.conn, window)?;
+        self.conn
+            .configure_window(window, &ConfigureWindowAux::new().x(x).y(y))?;
         Ok(())
     }
 
@@ -245,9 +304,11 @@ pub fn spawn_worker() -> std::sync::mpsc::Sender<Command> {
         let mut placed = false;
         for command in rx {
             let result = match command {
-                Command::Show { window, .. } if placed && x11.is_viewable(window) => {
-                    x11.activate_now(window)
-                }
+                Command::Show {
+                    window,
+                    width,
+                    height,
+                } if placed && x11.is_viewable(window) => x11.summon(window, width, height),
                 Command::Show {
                     window,
                     width,

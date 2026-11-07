@@ -50,18 +50,20 @@ If sensitive information has already been published, a new snapshot does not
 erase existing copies. See GitHub's
 [history-removal guidance](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
 
-## Build and inspect the candidate
+## Inspect a candidate
 
-1. Set the same version in every Cargo manifest under `crates/`. Refresh
-   `Cargo.lock` after changing Cargo package versions.
-2. Install the pinned tools and dependencies as described in the README.
-3. Run `just check` and the isolated X11 test from the README.
-4. Commit the source changes. Run `just package` from the clean checkout.
-5. Inspect the archives in `target/dist`. The binary archive contains `yoink`,
+Release-please sets the version, so a candidate is the head of its release PR.
+To inspect one before you merge it:
+
+1. Check out the release PR branch. Install the pinned tools and dependencies
+   as described in the README.
+2. Run `just check` and the isolated X11 test from the README.
+3. Run `just package` from the clean checkout.
+4. Inspect the archives in `target/dist`. The binary archive contains `yoink`,
    its licence notices, and the source commit ID. The source archive contains
    the tracked source and vendored Cargo dependencies. It contains no Git
    history.
-6. Extract the binary into a temporary directory. Run `./yoink --version` and
+5. Extract the binary into a temporary directory. Run `./yoink --version` and
    exercise capture, search, copy, delete, pagination, and `--quit` in an
    isolated graphical session. Test the oldest Linux distribution you intend
    to support.
@@ -75,16 +77,25 @@ release, because on 22.04 Mesa's software Vulkan driver draws a black window.
 The executable needs libxkbcommon-x11, a Vulkan driver, an X11 display, and a
 graphical-session D-Bus connection. It is not a static binary or an AppImage.
 
-## Tag and publish
+## Publish with release-please
 
-After the public repository is ready, tag the reviewed commit as `v0.2.0` and
-push the tag. The CI workflow rejects a tag that differs from the manifest
-versions. It creates a **draft** GitHub Release after the checks pass.
+Release-please runs on every push to `main` after the build job passes. It
+keeps one release PR open. That PR sets every Cargo package to the next
+version, updates `Cargo.lock`, and lists the commits since the last release in
+`CHANGELOG.md`. Commit types pick the version: `fix` bumps the patch, and
+`feat` bumps the minor version while yoink is below 1.0. Squash merges use the
+PR title as the commit message, so give each PR a Conventional Commits title.
 
-Inspect the draft's binary archive, source archive, and `SHA256SUMS`. Publish
-the draft when the artifacts and release notes are ready. Preserve the source
-archive alongside the binary so recipients can obtain the corresponding
-source and dependency notices.
+Merging the release PR tags its merge commit `v<version>` and publishes the
+GitHub Release. The `release-assets` job then attaches the binary archive, the
+source archive, and `SHA256SUMS`, which the same CI run built with
+`scripts/package.sh`. Keep the source archive with the binary so recipients
+can get the corresponding source and dependency notices.
+
+Release-please opens its PR with the workflow token, so keep the repository
+setting **Allow GitHub Actions to create and approve pull requests** on. CI
+does not run on the release PR itself. The build on `main` runs before
+release-please creates the release.
 
 Test the actual published release through mise in a clean configuration:
 

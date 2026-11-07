@@ -1,12 +1,18 @@
 {
   "packages": {
     ".": {
-      "release-type": "rust",
+      "release-type": "simple",
       "package-name": "yoink",
       "include-component-in-tag": false,
       "changelog-path": "CHANGELOG.md",
       "draft": false,
-      "prerelease": false
+      "prerelease": false,
+      "extra-files": [
+        { "type": "toml", "path": "crates/yoink/Cargo.toml", "jsonpath": "$.package.version" },
+        { "type": "toml", "path": "crates/yoink-clipboard/Cargo.toml", "jsonpath": "$.package.version" },
+        { "type": "toml", "path": "crates/yoink-core/Cargo.toml", "jsonpath": "$.package.version" },
+        { "type": "toml", "path": "Cargo.lock", "jsonpath": "$.package[?(!@.source)].version" }
+      ]
     }
   },
   "changelog-sections": [

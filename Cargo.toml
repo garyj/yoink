@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/yoink-clipboard", "crates/yoink-core", "crates/yoink-gpui", "src-tauri"]
+members = ["crates/yoink", "crates/yoink-clipboard", "crates/yoink-core"]

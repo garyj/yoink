@@ -52,32 +52,32 @@ erase existing copies. See GitHub's
 
 ## Build and inspect the candidate
 
-1. Set the same version in `package.json`, `src-tauri/tauri.conf.json`, and both
-   Cargo manifests. Refresh `Cargo.lock` after changing Cargo package versions.
+1. Set the same version in every Cargo manifest under `crates/`. Refresh
+   `Cargo.lock` after changing Cargo package versions.
 2. Install the pinned tools and dependencies as described in the README.
 3. Run `just check` and the isolated X11 test from the README.
 4. Commit the source changes. Run `just package` from the clean checkout.
 5. Inspect the archives in `target/dist`. The binary archive contains `yoink`,
    its licence notices, and the source commit ID. The source archive contains
-   the tracked source, vendored Cargo dependencies, and installed JavaScript
-   dependency sources. It contains no Git history.
+   the tracked source and vendored Cargo dependencies. It contains no Git
+   history.
 6. Extract the binary into a temporary directory. Run `./yoink --version` and
    exercise capture, search, copy, delete, pagination, and `--quit` in an
    isolated graphical session. Test the oldest Linux distribution you intend
    to support.
 
-The package script builds through the Tauri CLI. A bare Cargo release build
-does not embed the frontend. Staging directories remain inside `target/dist`
-for inspection and are excluded from the uploaded artifacts.
+Staging directories remain inside `target/dist` for inspection and are
+excluded from the uploaded artifacts.
 
 The GitHub workflow builds on Ubuntu 22.04 to set an older glibc baseline than
-the development workstation. The executable still needs GTK3, WebKitGTK 4.1,
-an X11 display, and a graphical-session D-Bus connection. It is not a static
-binary or an AppImage.
+the development workstation. Ubuntu 24.04 is still the oldest supported
+release, because on 22.04 Mesa's software Vulkan driver draws a black window.
+The executable needs libxkbcommon-x11, a Vulkan driver, an X11 display, and a
+graphical-session D-Bus connection. It is not a static binary or an AppImage.
 
 ## Tag and publish
 
-After the public repository is ready, tag the reviewed commit as `v0.1.0` and
+After the public repository is ready, tag the reviewed commit as `v0.2.0` and
 push the tag. The CI workflow rejects a tag that differs from the manifest
 versions. It creates a **draft** GitHub Release after the checks pass.
 
@@ -89,12 +89,12 @@ source and dependency notices.
 Test the actual published release through mise in a clean configuration:
 
 ```sh
-mise use -g github:garyj/yoink@0.1.0
-mise exec github:garyj/yoink@0.1.0 -- yoink --version
+mise use -g github:garyj/yoink@0.2.0
+mise exec github:garyj/yoink@0.2.0 -- yoink --version
 mise reshim
 ```
 
-The expected version output is `yoink 0.1.0`. Quit any older yoink process
+The expected version output is `yoink 0.2.0`. Quit any older yoink process
 before starting the new executable. An upgrade does not replace an already
 running process. If the repository is published under another owner, update
 the README's `github:` examples.

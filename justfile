@@ -8,31 +8,18 @@ log := data_dir / "yoink.log"
 default:
     @just --list --unsorted
 
-# Install frontend dependencies.
-install:
-    bun install --frozen-lockfile
-
-# Run in dev mode: vite dev server plus a Tauri window.
-dev:
-    bun run tauri dev
-
-# Build the release binary (never bare `cargo build --release`, see AGENTS.md).
+# Build the release binary.
 build:
-    bun run tauri build --no-bundle -- --locked
-
-# Build the GPUI release binary.
-build-gpui:
-    cargo build --locked --release -p yoink-gpui
+    cargo build --locked --release -p yoink
 
 # Run Rust tests. Pass a name to run one test.
 test *args:
     cargo test --locked --workspace {{ args }}
 
-# Clippy, rustfmt check, and svelte-check.
+# Clippy and rustfmt check.
 lint:
     cargo clippy --locked --workspace --all-targets -- -D warnings
     cargo fmt --all --check
-    bun run check
 
 # Format Rust sources.
 fmt:

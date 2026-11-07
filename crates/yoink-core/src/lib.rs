@@ -400,7 +400,7 @@ fn is_blank(text: &str) -> bool {
 }
 
 /// Lowercases and strips diacritics, so "vacsina" matches "väčšina".
-fn fold(text: &str) -> String {
+pub fn fold(text: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
     use unicode_normalization::char::is_combining_mark;
 

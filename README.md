@@ -130,6 +130,37 @@ appear when the search is empty. Text previews are shortened, but copying
 uses the full stored text. Read, copy, and deletion failures appear in the
 window. A clipboard write must succeed before a successful copy hides it.
 
+## Try the GPUI front end
+
+`yoink-gpui` is a second front end built with Zed's GPUI. It has a list and
+preview layout, follows the desktop's light or dark setting, and reads the same
+history and config as `yoink`. Run one front end at a time. Both record the
+clipboard, and each adds a tray icon.
+
+Build it from source. It needs two more libraries than the Tauri app:
+
+```sh
+sudo apt install libxkbcommon-x11-dev libx11-xcb-dev
+just build-gpui
+```
+
+The executable is `target/release/yoink-gpui`. Quit `yoink` first, then point
+the desktop shortcut at the full path of `yoink-gpui`. Unlike `yoink`, a
+shortcut press starts it if it is not running and shows the window. Start it
+at login with `yoink-gpui --hidden`.
+
+| Key | Result |
+| --- | --- |
+| Type | Filters text, ignoring case and accents |
+| Up, Down, Page Up, Page Down | Moves the selection |
+| Enter, or a double-click | Copies the selected item and hides the window |
+| Shift+Delete | Deletes the selected item |
+| Ctrl+Shift+Delete, or Delete all | Asks to delete all history |
+| Shift+Enter, or the red button | Confirms deleting all history. Enter alone never does |
+| Escape | Cancels a pending delete, then clears the search, then hides the window |
+
+`yoink-gpui --quit` stops the running instance.
+
 ## Configure
 
 The optional config file is `~/.config/dev.garyj.yoink/config.toml`:
@@ -203,9 +234,10 @@ Other distributions' build prerequisites are listed in the
 ## Develop and test
 
 `crates/yoink-core` owns SQLite persistence, search, retention, migrations,
-and config parsing. It has no GUI dependencies. The Tauri runtime owns the
-tray and commands; `src-tauri/src/clipboard.rs` owns clipboard access and
-X11 change tracking. `src/routes/+page.svelte` is the UI.
+and config parsing. It has no GUI dependencies. `crates/yoink-clipboard` owns
+clipboard access and X11 change tracking for both front ends. The Tauri
+runtime owns the tray and commands, and `src/routes/+page.svelte` is its UI.
+`crates/yoink-gpui` is the GPUI front end.
 
 Run the configured checks:
 

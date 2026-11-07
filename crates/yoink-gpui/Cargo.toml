@@ -1,0 +1,21 @@
+[package]
+name = "yoink-gpui"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+rust-version = "1.98"
+edition = "2024"
+
+[dependencies]
+futures = "0.3"
+gpui-kit = "0.9.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+ksni = { version = "0.3.6", features = ["blocking"] }
+libc = "0.2"
+raw-window-handle = "0.6"
+x11rb = { version = "0.13", features = ["randr"] }
+yoink-clipboard = { path = "../yoink-clipboard" }
+yoink-core = { path = "../yoink-core" }
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
+tempfile = "3.27.0"

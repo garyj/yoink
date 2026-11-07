@@ -4,7 +4,6 @@ on:
   pull_request:
   push:
     branches: [main, master]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -55,35 +54,57 @@ jobs:
           target/release/yoink --version
           target/release/yoink --help
           ldd target/release/yoink
-      - name: Package binary and corresponding source
-        if: github.ref_type == 'tag'
-        run: scripts/package.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: github.ref_type == 'tag'
-        with:
-          name: linux-release
-          path: |
-            target/dist/*.tar.gz
-            target/dist/SHA256SUMS
-          if-no-files-found: error
 
-  draft-release:
-    if: github.ref_type == 'tag'
+  release-please:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        id: release
+        with:
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
+
+  release-assets:
+    if: needs.release-please.outputs.release_created == 'true'
+    needs: release-please
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          name: linux-release
-          path: dist
-      - name: Create draft release
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-x11-dev libfontconfig-dev
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.1
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Package binary and corresponding source
+        run: scripts/package.sh
+      - name: Attach archives and publish the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          gh release create "$RELEASE_TAG" dist/*.tar.gz dist/SHA256SUMS \
-            --verify-tag --draft --title "yoink $RELEASE_TAG" \
-            --notes 'Linux x86_64 on X11, Ubuntu 24.04 or newer. Requires libxkbcommon-x11 and a Vulkan driver. The binary archive includes licences; the source archive includes dependency sources. See the README for installation and privacy details.'
+          gh release upload "$RELEASE_TAG" target/dist/*.tar.gz target/dist/SHA256SUMS --clobber
+          notes='Linux x86_64 on X11, Ubuntu 24.04 or newer. Requires libxkbcommon-x11 and a Vulkan driver. The binary archive includes licences; the source archive includes dependency sources. See the README for installation and privacy details.'
+          changelog=$(gh release view "$RELEASE_TAG" --json body --jq .body)
+          gh release edit "$RELEASE_TAG" --title "yoink $RELEASE_TAG" \
+            --notes "$(printf '%s\n\n%s\n' "$notes" "$changelog")" --draft=false --latest

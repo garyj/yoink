@@ -5,7 +5,8 @@
       "package-name": "yoink",
       "include-component-in-tag": false,
       "changelog-path": "CHANGELOG.md",
-      "draft": false,
+      "draft": true,
+      "force-tag-creation": true,
       "prerelease": false,
       "extra-files": [
         { "type": "toml", "path": "crates/yoink/Cargo.toml", "jsonpath": "$.package.version" },

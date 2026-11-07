@@ -86,10 +86,11 @@ version, updates `Cargo.lock`, and lists the commits since the last release in
 `feat` bumps the minor version while yoink is below 1.0. Squash merges use the
 PR title as the commit message, so give each PR a Conventional Commits title.
 
-Merging the release PR tags its merge commit `v<version>` and publishes the
-GitHub Release. The `release-assets` job then attaches the binary archive, the
-source archive, and `SHA256SUMS`, which the same CI run built with
-`scripts/package.sh`. Keep the source archive with the binary so recipients
+Merging the release PR tags its merge commit `v<version>` and creates a draft
+GitHub Release. The `release-assets` job builds the binary archive, the source
+archive, and `SHA256SUMS` from that tag with `scripts/package.sh`, attaches
+them, and publishes the release. If the job fails, the release stays a draft
+until you rerun the job. Keep the source archive with the binary so recipients
 can get the corresponding source and dependency notices.
 
 Release-please opens its PR with the workflow token, so keep the repository

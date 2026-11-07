@@ -54,18 +54,6 @@ jobs:
           target/release/yoink --version
           target/release/yoink --help
           ldd target/release/yoink
-      - name: Package binary and corresponding source
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: scripts/package.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          name: linux-release
-          path: |
-            target/dist/*.tar.gz
-            target/dist/SHA256SUMS
-          if-no-files-found: error
-          retention-days: 7
 
   release-please:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -94,20 +82,29 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          name: linux-release
-          path: dist
-      - name: Attach archives and notes to the release
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-x11-dev libfontconfig-dev
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.1
+      - name: Install Rust toolchain
+        run: rustup show
+      - name: Package binary and corresponding source
+        run: scripts/package.sh
+      - name: Attach archives and publish the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          # The archives were built from this run's commit, so it must be the tagged one.
-          test "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)" = "$GITHUB_SHA"
-          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/SHA256SUMS
+          gh release upload "$RELEASE_TAG" target/dist/*.tar.gz target/dist/SHA256SUMS --clobber
           notes='Linux x86_64 on X11, Ubuntu 24.04 or newer. Requires libxkbcommon-x11 and a Vulkan driver. The binary archive includes licences; the source archive includes dependency sources. See the README for installation and privacy details.'
           changelog=$(gh release view "$RELEASE_TAG" --json body --jq .body)
           gh release edit "$RELEASE_TAG" --title "yoink $RELEASE_TAG" \
-            --notes "$(printf '%s\n\n%s\n' "$notes" "$changelog")"
+            --notes "$(printf '%s\n\n%s\n' "$notes" "$changelog")" --draft=false --latest

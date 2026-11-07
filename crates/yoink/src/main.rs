@@ -15,16 +15,16 @@ use yoink_core::{Config, HistoryStore};
 use crate::app::{Message, Yoink};
 use crate::ipc::Request;
 
-const SOCKET: &str = "yoink-gpui.sock";
-const LOCK: &str = "yoink-gpui.lock";
+const SOCKET: &str = "yoink.sock";
+const LOCK: &str = "yoink.lock";
 
-const USAGE: &str = "yoink-gpui - clipboard history for Linux X11
+const USAGE: &str = "yoink - clipboard history for Linux X11
 
-Usage: yoink-gpui [--hidden | --quit | --version | --help]
+Usage: yoink [--hidden | --quit | --version | --help]
 
-Shows the window, and starts yoink-gpui first if it is not running.
+Shows the window, and starts yoink first if it is not running.
 Run it again while the window has focus to hide the window.
---hidden starts yoink-gpui without showing the window, for autostart.
+--hidden starts yoink without showing the window, for autostart.
 --quit stops the running instance without changing history.";
 
 fn main() {
@@ -36,7 +36,7 @@ fn main() {
         .as_slice()
     {
         ["--help"] | ["-h"] => return println!("{USAGE}"),
-        ["--version"] | ["-V"] => return println!("yoink-gpui {}", env!("CARGO_PKG_VERSION")),
+        ["--version"] | ["-V"] => return println!("yoink {}", env!("CARGO_PKG_VERSION")),
         [] => false,
         ["--hidden"] => true,
         ["--quit"] => {
@@ -44,7 +44,7 @@ fn main() {
             return;
         }
         _ => {
-            eprintln!("yoink-gpui: unknown arguments; run yoink-gpui --help");
+            eprintln!("yoink: unknown arguments; run yoink --help");
             std::process::exit(2);
         }
     };
@@ -63,7 +63,7 @@ fn main() {
         return;
     }
     if let Err(error) = run(hidden, &socket, &runtime_dir.join(LOCK)) {
-        eprintln!("yoink-gpui: {error}");
+        eprintln!("yoink: {error}");
         std::process::exit(1);
     }
 }
@@ -78,7 +78,7 @@ fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
         .join("dev.garyj.yoink")
 }
 
-/// Shared with the Tauri app, so both read one history.
+/// Earlier releases keep history in this directory, so keep its name.
 fn data_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share")
 }
@@ -159,7 +159,7 @@ fn run(hidden: bool, socket: &Path, lock: &Path) -> Result<(), Box<dyn std::erro
                     title: Some("yoink".into()),
                     ..Default::default()
                 }),
-                app_id: Some("yoink-gpui".into()),
+                app_id: Some("yoink".into()),
                 window_background: WindowBackgroundAppearance::Transparent,
                 window_decorations: Some(WindowDecorations::Client),
                 window_min_size: Some(size(px(560.), px(360.))),
@@ -171,7 +171,7 @@ fn run(hidden: bool, socket: &Path, lock: &Path) -> Result<(), Box<dyn std::erro
             let (handle, view) = match opened {
                 Ok(opened) => opened,
                 Err(error) => {
-                    eprintln!("yoink-gpui: cannot open the window: {error}");
+                    eprintln!("yoink: cannot open the window: {error}");
                     cx.quit();
                     return;
                 }

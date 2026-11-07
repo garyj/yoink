@@ -429,10 +429,7 @@ mod tests {
                     "-target",
                     "image/png",
                     "-i",
-                    concat!(
-                        env!("CARGO_MANIFEST_DIR"),
-                        "/../../src-tauri/icons/128x128.png"
-                    ),
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/yoink-128.png"),
                 ])
                 .status()
                 .unwrap()

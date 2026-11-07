@@ -9,9 +9,10 @@ owned by the desktop environment are the scope.
 
 ![yoink with synthetic clipboard history](docs/screenshot.png)
 
-**Platform:** Linux x86_64, X11 with XFixes, GTK3, WebKitGTK 4.1, and a session
-D-Bus connection. A StatusNotifierWatcher is needed for the tray. Native
-Wayland, macOS, and Windows are not supported.
+**Platform:** Linux x86_64 on X11 with XFixes, a Vulkan driver, and a session
+D-Bus connection. Ubuntu 24.04 is the oldest tested release. A
+StatusNotifierWatcher is needed for the tray. Native Wayland, macOS, and
+Windows are not supported.
 
 **Privacy:** clipboard history is stored unencrypted on your computer.
 Passwords and tokens can enter history unless the copying application marks
@@ -27,13 +28,13 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 ~/.local/bin/yoink --version
 ```
 
-Pass `--version 0.1.0` to install a specific release or `--prefix /absolute/path`
+Pass `--version 0.2.0` to install a specific release or `--prefix /absolute/path`
 to use another installation prefix:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/garyj/yoink/main/install.sh | \
-  sh -s -- --version 0.1.0
+  sh -s -- --version 0.2.0
 ```
 
 The installer verifies the release archive against its published SHA-256
@@ -51,39 +52,42 @@ Alternatively, use mise's built-in
 [GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html):
 
 ```sh
-mise use -g github:garyj/yoink@0.1.0
-mise exec github:garyj/yoink@0.1.0 -- yoink --version
+mise use -g github:garyj/yoink@0.2.0
+mise exec github:garyj/yoink@0.2.0 -- yoink --version
 mise reshim
 ```
 
 No custom mise plugin is needed. These examples use `garyj/yoink`; forks need
 their own repository name. Use a current mise version with the GitHub backend.
 
-On Ubuntu 22.04 and compatible distributions, install the runtime libraries:
+On Ubuntu 24.04 and compatible distributions, install the runtime libraries:
 
 ```sh
-sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0
+sudo apt install libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers
 ```
 
-Newer Ubuntu releases may name the GTK package `libgtk-3-0t64`. The binary
-dynamically links these libraries. The installer and mise do not install them.
+`mesa-vulkan-drivers` covers Intel and AMD graphics and software rendering.
+The NVIDIA driver brings its own Vulkan driver. yoink also needs a common
+desktop font such as Ubuntu, Noto Sans, or DejaVu Sans. The installer and mise
+do not install these packages.
 
-You can also download `yoink-v0.1.0-x86_64-unknown-linux-gnu.tar.gz` and
+You can also download `yoink-v0.2.0-x86_64-unknown-linux-gnu.tar.gz` and
 `SHA256SUMS` from the GitHub Release, then extract them in an empty directory:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf yoink-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf yoink-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
 ./yoink --version
 ```
 
-The expected output is `yoink 0.1.0`. Keep the licence files with the binary.
+The expected output is `yoink 0.2.0`. Keep the licence files with the binary.
 
 ## Start and summon
 
-Run `yoink` in your graphical session. It starts hidden and captures the
-clipboard. Run it again, or click the tray icon, to show the window.
-Further invocations toggle the same instance.
+Run `yoink` in your graphical session to show the window. If yoink is not
+running, this starts it, and it captures the clipboard until you quit it. Run
+`yoink` again while the window has focus to hide the window. The tray icon
+also shows and hides the window.
 
 In Cinnamon, open **System Settings**, **Keyboard**, **Shortcuts**, then
 **Custom Shortcuts**. Bind your chosen key to the full path of the executable.
@@ -101,53 +105,24 @@ For a mise installation, use the stable shim path after `mise reshim`:
 
 Replace `YOUR_USER` with your username. If you set `MISE_DATA_DIR`, use its
 `shims/yoink` path instead. Test that exact command from the desktop shortcut.
-Add the same command to startup applications to capture clipboard history
-from login. There is no built-in global shortcut.
+There is no built-in global shortcut.
 
-Quit from the tray menu or run `yoink --quit`. The close button and Escape
-hide the window without stopping capture. The window stays open when focus
-moves elsewhere.
+To capture clipboard history from login, add the same path with `--hidden` to
+your startup applications. `--hidden` starts yoink without showing the window.
+Startup entries made for yoink 0.1.0 have no `--hidden`, so add it after an
+upgrade, or the window opens at every login.
+
+Quit from the tray menu or run `yoink --quit`. The close button hides the
+window without stopping capture. The window stays open when focus moves
+elsewhere.
 
 After an upgrade, quit the old process and start yoink again. Installing a
 new version does not replace the running process.
 
 ## Use the window
 
-| Action | Result |
-| --- | --- |
-| Type in search | Filters text, ignoring case and accents |
-| Enter in search | Copies the first result and hides the window |
-| Select a card, then Ctrl+C | Copies that item and hides the window |
-| Ctrl+C inside search | Copies the selected search text normally |
-| Double-click a card | Copies that item and hides the window |
-| Hover or focus a card, then select its X | Removes it from history |
-| Newer or Older | Browses another page of retained items |
-| Clear all, then Sure? | Removes all saved history |
-| Escape | Hides the window |
-
-Copying an existing item moves it to the top without a duplicate. Images
-appear when the search is empty. Text previews are shortened, but copying
-uses the full stored text. Read, copy, and deletion failures appear in the
-window. A clipboard write must succeed before a successful copy hides it.
-
-## Try the GPUI front end
-
-`yoink-gpui` is a second front end built with Zed's GPUI. It has a list and
-preview layout, follows the desktop's light or dark setting, and reads the same
-history and config as `yoink`. Run one front end at a time. Both record the
-clipboard, and each adds a tray icon.
-
-Build it from source. It needs two more libraries than the Tauri app:
-
-```sh
-sudo apt install libxkbcommon-x11-dev libx11-xcb-dev
-just build-gpui
-```
-
-The executable is `target/release/yoink-gpui`. Quit `yoink` first, then point
-the desktop shortcut at the full path of `yoink-gpui`. Unlike `yoink`, a
-shortcut press starts it if it is not running and shows the window. Start it
-at login with `yoink-gpui --hidden`.
+The window has a list of history items and a preview of the selected item. It
+follows the desktop's light or dark setting.
 
 | Key | Result |
 | --- | --- |
@@ -159,7 +134,12 @@ at login with `yoink-gpui --hidden`.
 | Shift+Enter, or the red button | Confirms deleting all history. Enter alone never does |
 | Escape | Cancels a pending delete, then clears the search, then hides the window |
 
-`yoink-gpui --quit` stops the running instance.
+The search field always has focus, so Ctrl+C copies selected search text.
+
+Copying an existing item moves it to the top without a duplicate. Images
+appear when the search is empty. Text previews are shortened, but copying
+uses the full stored text. Read, copy, and deletion failures appear in the
+window. A clipboard write must succeed before a successful copy hides it.
 
 ## Configure
 
@@ -207,37 +187,30 @@ ownership changes, rather than repeatedly decoding an unchanged clipboard.
 ## Build from source
 
 Install Rust through [rustup](https://rustup.rs), which reads the pinned
-`rust-toolchain.toml`. The tested toolchain is Rust 1.98.0. Install Bun 1.4.0
-directly or run `mise install` in this repository.
+`rust-toolchain.toml`. The tested toolchain is Rust 1.98.0.
 
-On Ubuntu or Debian derivatives, install the build libraries:
+On Ubuntu or Debian derivatives, install the build libraries, then build:
 
 ```sh
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl file \
-  libxdo-dev libssl-dev librsvg2-dev libdbus-1-dev
-bun install --frozen-lockfile
-bun run tauri build --no-bundle -- --locked
+sudo apt install build-essential pkg-config libxkbcommon-x11-dev libfontconfig-dev
+cargo build --locked --release -p yoink
 ```
 
-The executable is `target/release/yoink`. Always build releases through the
-Tauri CLI. A bare `cargo build --release` does not enable embedded assets
-and makes the webview look for the development server.
+The executable is `target/release/yoink`. `just build` runs the same build.
 
-For development, run `bun run tauri dev`. The app starts hidden here too.
-Click the tray icon or run `target/debug/yoink` in another terminal to summon
-it. Development uses the same data directory unless you set different XDG
-directories before starting the process.
+For development, run `cargo run -p yoink`. Development uses the same data
+directory unless you set different XDG directories before starting the
+process.
 
-Other distributions' build prerequisites are listed in the
-[Tauri documentation](https://v2.tauri.app/start/prerequisites/).
+`just package` also needs `cargo-about`. Run `mise install` in this repository
+to install the pinned version.
 
 ## Develop and test
 
 `crates/yoink-core` owns SQLite persistence, search, retention, migrations,
 and config parsing. It has no GUI dependencies. `crates/yoink-clipboard` owns
-clipboard access and X11 change tracking for both front ends. The Tauri
-runtime owns the tray and commands, and `src/routes/+page.svelte` is its UI.
-`crates/yoink-gpui` is the GPUI front end.
+clipboard access and X11 change tracking. `crates/yoink` is the GPUI app: the
+window, the tray, and the socket that hands a summon to the running instance.
 
 Run the configured checks:
 
@@ -245,7 +218,6 @@ Run the configured checks:
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
-bun run check
 ```
 
 With `xvfb` and `xclip` installed, run the clipboard integration tests on their own X server:
@@ -258,9 +230,9 @@ The integration test changes its display's clipboard, so do not run it
 against your normal desktop. On machines without the GUI development
 libraries, `cargo test --locked -p yoink-core` runs the storage tests alone.
 
-`just check` wraps formatting, Clippy, tests, and Svelte checks. There is no
-separate ESLint configuration or automated frontend test suite. Exercise
-changed UI behavior in the real WebKitGTK app before release.
+`just check` wraps formatting, Clippy, and tests. A GPUI test drives search,
+copy, and delete from the keyboard without a display. Exercise changed UI
+behavior in the real app before release.
 
 See [dependency review notes](docs/dependencies.md) for known upstream
 advisories and [the release guide](docs/releasing.md) for packaging and

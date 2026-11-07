@@ -130,7 +130,6 @@ install -m 644 "$tmpdir/archive/yoink.png" "$icon_path"
 install -m 644 "$tmpdir/archive/LICENSE" "$doc_path/LICENSE"
 install -m 644 "$tmpdir/archive/NOTICE.md" "$doc_path/NOTICE.md"
 install -m 644 "$tmpdir/archive/README.md" "$doc_path/README.md"
-install -m 644 "$tmpdir/archive/FRONTEND_LICENSES.txt" "$doc_path/FRONTEND_LICENSES.txt"
 install -m 644 "$tmpdir/archive/THIRD_PARTY_LICENSES.html" "$doc_path/THIRD_PARTY_LICENSES.html"
 install -m 644 "$tmpdir/archive/SOURCE_COMMIT" "$doc_path/SOURCE_COMMIT"
 

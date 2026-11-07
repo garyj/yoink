@@ -121,8 +121,8 @@ mod tests {
     #[test]
     fn one_instance_owns_the_socket_and_receives_requests() {
         let dir = tempfile::tempdir().unwrap();
-        let socket = dir.path().join("yoink-gpui.sock");
-        let lock_path = dir.path().join("yoink-gpui.lock");
+        let socket = dir.path().join("yoink.sock");
+        let lock_path = dir.path().join("yoink.lock");
         assert!(!send(&socket, Request::Toggle));
 
         let lock = lock(&lock_path)

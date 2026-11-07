@@ -17,7 +17,7 @@ impl ksni::Tray for Tray {
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        static ICON_PNG: &[u8] = include_bytes!("../../../src-tauri/icons/32x32.png");
+        static ICON_PNG: &[u8] = include_bytes!("../../../assets/yoink-32.png");
         let Ok(decoded) = image::load_from_memory_with_format(ICON_PNG, image::ImageFormat::Png)
         else {
             return Vec::new();

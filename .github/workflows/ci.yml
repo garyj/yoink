@@ -30,10 +30,8 @@ jobs:
         run: |
           shellcheck install.sh
           prefix=$(mktemp -d)
-          ./install.sh --version 0.1.0 --prefix "$prefix"
-          # The published 0.1.0 binary links libraries this job does not
-          # install, so it cannot run here.
-          test -x "$prefix/bin/yoink"
+          ./install.sh --version 0.2.0 --prefix "$prefix"
+          test "$("$prefix/bin/yoink" --version)" = "yoink 0.2.0"
           test -s "$prefix/share/applications/dev.garyj.yoink.desktop"
           ./install.sh --uninstall --prefix "$prefix"
           test ! -e "$prefix/bin/yoink"

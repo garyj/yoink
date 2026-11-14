@@ -27,6 +27,7 @@ gpui_kit::actions!(
         PagePrev,
         PageNext,
         Confirm,
+        CopyKeepOpen,
         Dismiss,
         DeleteItem,
         StartClear,
@@ -57,6 +58,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-delete", DeleteItem, Some("Yoink > Input")),
         KeyBinding::new("ctrl-shift-delete", StartClear, Some("Yoink > Input")),
         KeyBinding::new("shift-enter", ConfirmClear, Some("Yoink > Input")),
+        KeyBinding::new("ctrl-enter", CopyKeepOpen, Some("Yoink > Input")),
     ]);
 }
 
@@ -453,11 +455,17 @@ impl Yoink {
         // Deleting everything needs Shift+Enter or a click, so a habitual Enter
         // cannot do it.
         if !self.confirming_clear {
-            self.copy_selected(cx);
+            self.copy_selected(true, cx);
         }
     }
 
-    fn copy_selected(&mut self, cx: &mut Context<Self>) {
+    fn copy_keep_open(&mut self, _: &CopyKeepOpen, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.confirming_clear {
+            self.copy_selected(false, cx);
+        }
+    }
+
+    fn copy_selected(&mut self, hide: bool, cx: &mut Context<Self>) {
         let Some(id) = self.rows.get(self.selected).map(|row| row.id) else {
             return;
         };
@@ -468,10 +476,14 @@ impl Yoink {
                 .background_spawn(async move { copy_item(&store, &clipboard, id) })
                 .await;
             this.update_in(cx, |this, window, cx| match result {
-                Ok(()) => {
+                Ok(()) if hide => {
                     this.search
                         .update(cx, |search, cx| search.set_value("", window, cx));
                     this.hide(window, cx);
+                }
+                Ok(()) => {
+                    this.error = None;
+                    cx.notify();
                 }
                 Err(error) => {
                     this.error = Some(format!("Cannot copy item: {error}").into());
@@ -639,6 +651,7 @@ impl Render for Yoink {
             .on_action(cx.listener(Self::page_next))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::copy_keep_open))
             .on_action(cx.listener(Self::delete_selected))
             .on_action(cx.listener(Self::start_clear))
             .on_action(cx.listener(Self::confirm_clear))
@@ -840,7 +853,7 @@ impl Yoink {
                 this.search
                     .update(cx, |search, cx| search.focus(window, cx));
                 if event.click_count() >= 2 {
-                    this.copy_selected(cx);
+                    this.copy_selected(!event.modifiers().control, cx);
                 }
             }))
             .into_any_element()
@@ -1310,6 +1323,7 @@ impl Yoink {
             .when(has_rows, |footer| {
                 footer
                     .child(hint(&["Enter"], "Copy and hide", true))
+                    .child(hint(&["Ctrl", "Enter"], "Copy", false))
                     .child(hint(&["↑", "↓"], "Navigate", false))
                     .child(hint(&["Shift", "Del"], "Delete", false))
             })
@@ -1439,6 +1453,9 @@ mod tests {
     use std::sync::{Arc, Mutex, mpsc};
     use std::time::Duration;
 
+    use gpui::{
+        Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, VisualTestContext, point, px,
+    };
     use gpui_kit::{AppContext as _, Bounds, Point, TestAppContext, WindowBounds, WindowOptions};
     use yoink_clipboard as clipboard;
     use yoink_core::HistoryStore;
@@ -1447,7 +1464,7 @@ mod tests {
     use crate::ipc::Request;
 
     #[gpui::test]
-    fn search_copy_and_delete_from_the_keyboard(cx: &mut TestAppContext) {
+    fn search_copy_and_delete(cx: &mut TestAppContext) {
         let store = Arc::new(Mutex::new(HistoryStore::open_in_memory().unwrap()));
         {
             let mut store = store.lock().unwrap();
@@ -1501,6 +1518,18 @@ mod tests {
         cx.simulate_input(window, "cafe");
         assert_eq!(titles(cx), ["Café notes for Friday"]);
 
+        cx.simulate_keystrokes(window, "ctrl-enter");
+        cx.run_until_parked();
+        assert_eq!(
+            copied.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "Café notes for Friday"
+        );
+        cx.run_until_parked();
+        view.read_with(cx, |view, cx| {
+            assert!(view.shown, "Ctrl+Enter keeps the window open");
+            assert_eq!(view.search.read(cx).value(), "cafe");
+        });
+
         cx.simulate_keystrokes(window, "enter");
         cx.run_until_parked();
         assert_eq!(
@@ -1513,12 +1542,58 @@ mod tests {
             assert_eq!(view.search.read(cx).value(), "", "a copy clears the search");
         });
 
-        cx.update_window(window, |_, window, cx| {
-            view.update(cx, |view, cx| {
-                view.handle(Message::Request(Request::Show), window, cx)
+        let show = |cx: &mut TestAppContext| {
+            cx.update_window(window, |_, window, cx| {
+                view.update(cx, |view, cx| {
+                    view.handle(Message::Request(Request::Show), window, cx)
+                })
             })
-        })
-        .unwrap();
+            .unwrap()
+        };
+        let double_click_first_row = |cx: &mut TestAppContext, control: bool| {
+            let mut cx = VisualTestContext::from_window(window, cx);
+            let position = point(px(100.), px(100.));
+            let modifiers = Modifiers {
+                control,
+                ..Default::default()
+            };
+            cx.simulate_event(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers,
+                click_count: 2,
+                first_mouse: false,
+            });
+            cx.simulate_event(MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers,
+                click_count: 2,
+            });
+        };
+        show(cx);
+        double_click_first_row(cx, true);
+        assert_eq!(
+            copied.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "#ff9900"
+        );
+        cx.run_until_parked();
+        assert!(
+            view.read_with(cx, |view, _| view.shown),
+            "Ctrl+double-click keeps the window open"
+        );
+        double_click_first_row(cx, false);
+        assert_eq!(
+            copied.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "#ff9900"
+        );
+        cx.run_until_parked();
+        assert!(
+            !view.read_with(cx, |view, _| view.shown),
+            "a double-click hides the window"
+        );
+
+        show(cx);
         cx.simulate_keystrokes(window, "down shift-delete");
         assert_eq!(titles(cx), ["#ff9900", "git status --short"]);
         assert_eq!(store.lock().unwrap().len().unwrap(), 2);

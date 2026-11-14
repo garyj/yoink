@@ -129,6 +129,7 @@ follows the desktop's light or dark setting.
 | Type | Filters text, ignoring case and accents |
 | Up, Down, Page Up, Page Down | Moves the selection |
 | Enter, or a double-click | Copies the selected item and hides the window |
+| Ctrl+Enter, or Ctrl+double-click | Copies the selected item and keeps the window open |
 | Shift+Delete | Deletes the selected item |
 | Ctrl+Shift+Delete, or Delete all | Asks to delete all history |
 | Shift+Enter, or the red button | Confirms deleting all history. Enter alone never does |

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/garyj/yoink/compare/v0.2.0...v0.3.0) (2026-11-14)
+
+
+### 🥑 Features
+
+* copy an item without hiding the window ([#17](https://github.com/garyj/yoink/issues/17)) ([95a7740](https://github.com/garyj/yoink/commit/95a7740544b470ae579686fe486ebdae8797b92f))
+
+
+### 🛠️ Automation
+
+* run the installed 0.2.0 binary in the installer test ([#15](https://github.com/garyj/yoink/issues/15)) ([a89fd91](https://github.com/garyj/yoink/commit/a89fd91b3e303cc39a5e9388e5a4dd587dac818b))
+
 ## [0.2.0](https://github.com/garyj/yoink/compare/v0.1.0...v0.2.0) (2026-11-07)
 
 

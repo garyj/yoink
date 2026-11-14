@@ -8635,7 +8635,7 @@ dependencies = [
 
 [[package]]
 name = "yoink"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "futures",
  "gpui-kit",
@@ -8652,7 +8652,7 @@ dependencies = [
 
 [[package]]
 name = "yoink-clipboard"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "image",
@@ -8662,7 +8662,7 @@ dependencies = [
 
 [[package]]
 name = "yoink-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rusqlite",
  "serde",

@@ -92,8 +92,11 @@ GitHub Release. The `release-assets` job checks out that tag and takes the
 executable that the build job compiled from the same commit. It then creates
 the binary archive, the source archive, and `SHA256SUMS` with
 `scripts/package.sh`, attaches them, and publishes the release. If the job
-fails, the release stays a draft until you rerun the job. Keep the source archive with the binary so recipients
-can get the corresponding source and dependency notices.
+fails, the release stays a draft until you rerun the job. The rerun needs the
+run's `yoink` artifact, which GitHub deletes after the repository's artifact
+retention period, 90 days by default. After that, the rerun fails at the
+download step. Keep the source archive with the binary so recipients can get
+the corresponding source and dependency notices.
 
 Release-please opens its PR with the workflow token, so keep the repository
 setting **Allow GitHub Actions to create and approve pull requests** on. CI

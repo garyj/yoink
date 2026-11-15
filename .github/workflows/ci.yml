@@ -83,7 +83,6 @@ jobs:
           name: yoink
           path: target/release/yoink
           if-no-files-found: error
-          retention-days: 7
 
   release-please:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

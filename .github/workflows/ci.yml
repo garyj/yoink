@@ -118,6 +118,10 @@ jobs:
           persist-credentials: false
       - name: Check that the tag is the built commit
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Install runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-0
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
           version: 2026.9.1

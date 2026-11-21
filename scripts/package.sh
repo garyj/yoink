@@ -12,7 +12,9 @@ if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   exit 1
 fi
 binary=target/release/yoink
-cargo build --locked --release -p yoink
+if [[ -z ${YOINK_PREBUILT:-} ]]; then
+  cargo build --locked --release -p yoink
+fi
 test "$("$binary" --version)" = "yoink $version"
 output=${1:-target/dist}
 mkdir -p "$output"

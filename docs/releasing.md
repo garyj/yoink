@@ -79,24 +79,33 @@ graphical-session D-Bus connection. It is not a static binary or an AppImage.
 
 ## Publish with release-please
 
-Release-please runs on every push to `main` after the build job passes. It
-keeps one release PR open. That PR sets every Cargo package to the next
-version, updates `Cargo.lock`, and lists the commits since the last release in
-`CHANGELOG.md`. Commit types pick the version: `fix` bumps the patch, and
-`feat` bumps the minor version while yoink is below 1.0. Squash merges use the
-PR title as the commit message, so give each PR a Conventional Commits title.
+Release-please runs on every push to `main` after the check and build jobs
+pass. It keeps one release PR open. That PR sets every Cargo package to the
+next version, updates `Cargo.lock`, and lists the commits since the last
+release in `CHANGELOG.md`. Commit types pick the version: `fix` bumps the
+patch, and `feat` bumps the minor version while yoink is below 1.0. Squash
+merges use the PR title as the commit message, so give each PR a Conventional
+Commits title.
 
 Merging the release PR tags its merge commit `v<version>` and creates a draft
-GitHub Release. The `release-assets` job builds the binary archive, the source
-archive, and `SHA256SUMS` from that tag with `scripts/package.sh`, attaches
-them, and publishes the release. If the job fails, the release stays a draft
-until you rerun the job. Keep the source archive with the binary so recipients
-can get the corresponding source and dependency notices.
+GitHub Release. The `release-assets` job checks out that tag and takes the
+executable that the build job compiled from the same commit. It then creates
+the binary archive, the source archive, and `SHA256SUMS` with
+`scripts/package.sh`, attaches them, and publishes the release. If the job
+fails, the release stays a draft until you rerun the job. The rerun needs the
+run's `yoink` artifact, which GitHub deletes after the repository's artifact
+retention period, 90 days by default. After that, the rerun fails at the
+download step. Keep the source archive with the binary so recipients can get
+the corresponding source and dependency notices.
 
 Release-please opens its PR with the workflow token, so keep the repository
 setting **Allow GitHub Actions to create and approve pull requests** on. CI
 does not run on the release PR itself. The build on `main` runs before
 release-please creates the release.
+
+CI caches Cargo dependencies. Only runs on `main` save a cache, and pull
+requests restore it. The build job on `main` never restores a cache, so every
+released executable is compiled from clean.
 
 Test the actual published release through mise in a clean configuration:
 

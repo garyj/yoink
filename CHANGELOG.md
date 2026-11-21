@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/garyj/yoink/compare/v0.3.0...v0.3.1) (2026-11-21)
+
+
+### 🛠️ Automation
+
+* cache Cargo dependencies and build the release binary once ([#18](https://github.com/garyj/yoink/issues/18)) ([35ca279](https://github.com/garyj/yoink/commit/35ca27948d83cc270b2cedccfcc58152f1311731))
+
 ## [0.3.0](https://github.com/garyj/yoink/compare/v0.2.0...v0.3.0) (2026-11-14)
 
 
